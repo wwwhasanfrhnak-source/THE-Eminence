@@ -1,0 +1,1 @@
+from electrocalc.ui.tabs.management_tabs import ExpensesTab
