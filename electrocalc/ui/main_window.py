@@ -2,6 +2,7 @@
 
 import os
 import tkinter as tk
+import tkinter.font as tkfont
 import traceback
 from tkinter import ttk, messagebox
 from pathlib import Path
@@ -88,10 +89,11 @@ class SidebarButton(tk.Frame):
         self.command = command
         self.active = False
         self.collapsed = collapsed
+        self.active_bg = palette.get("active_bg", palette["card"])
         self.icon = icon
         self.text = text
 
-        self.indicator = tk.Frame(self, width=4, bg=palette["sidebar"])
+        self.indicator = tk.Frame(self, width=3, bg=palette["sidebar"])
         self.indicator.pack(side="right", fill="y")
 
         if collapsed:
@@ -108,10 +110,10 @@ class SidebarButton(tk.Frame):
             text=label_text,
             bg=palette["sidebar"],
             fg=palette["muted"],
-            font=("Segoe UI", 11),
+            font=(palette.get("font_family", "Segoe UI"), 10),
             anchor=anchor,
             padx=padx,
-            pady=13,
+            pady=10,
         )
         self.label.pack(side="right", fill="both", expand=True)
 
@@ -134,8 +136,9 @@ class SidebarButton(tk.Frame):
 
     def _enter(self, e):
         if not self.active:
-            self.label.config(bg=self.palette["card"], fg=self.palette["text"])
-            self.config(bg=self.palette["card"])
+            hover_bg = self.palette.get("active_bg", self.palette["card"])
+            self.label.config(bg=hover_bg, fg=self.palette["text"])
+            self.config(bg=hover_bg)
 
     def _leave(self, e):
         if not self.active:
@@ -144,12 +147,19 @@ class SidebarButton(tk.Frame):
 
     def set_active(self, active):
         self.active = active
+        background = self.active_bg if active else self.palette["sidebar"]
         self.indicator.config(
             bg=self.palette["accent"] if active else self.palette["sidebar"]
         )
+        self.config(bg=background)
         self.label.config(
-            fg=self.palette["text"] if active else self.palette["muted"],
-            font=("Segoe UI", 11, "bold" if active else "normal"),
+            bg=background,
+            fg=self.palette["accent"] if active else self.palette["muted"],
+            font=(
+                self.palette.get("font_family", "Segoe UI"),
+                10,
+                "bold" if active else "normal",
+            ),
         )
 
 
@@ -178,6 +188,8 @@ class MainWindow(TouchScrollable):
         self._sidebar_frame = None
         self._content_frame = None
         self._bell_label = None
+        self._page_title_label = None
+        self._page_subtitle_label = None
 
         # ویجت‌های هدر
         self._toggle_sidebar_btn = None
@@ -199,6 +211,7 @@ class MainWindow(TouchScrollable):
         self.palette = themes_module.get_palette(self.current_theme)
 
         self.root = tk.Tk()
+        self._configure_fonts()
         self._setup_root()
         self._build_all()
         self._start_active_check()
@@ -210,6 +223,46 @@ class MainWindow(TouchScrollable):
         self.root.bind("<Control-k>", lambda e: self._show_search())
 
         log.info(f"MainWindow ساخته شد. تم: {self.current_theme}")
+
+    def _configure_fonts(self):
+        families = {name.casefold(): name for name in tkfont.families(self.root)}
+        default_family = tkfont.nametofont(
+            "TkDefaultFont", root=self.root
+        ).actual("family")
+        self.font_family = next(
+            (
+                families[name.casefold()]
+                for name in (
+                    "Vazirmatn",
+                    "IRANSans",
+                    "Noto Sans Arabic",
+                    "Tahoma",
+                    "Segoe UI",
+                    "DejaVu Sans",
+                    "Arial",
+                )
+                if name.casefold() in families
+            ),
+            default_family,
+        )
+        self.palette["font_family"] = self.font_family
+
+        for font_name in (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+            "TkTooltipFont",
+        ):
+            try:
+                tkfont.nametofont(font_name, root=self.root).configure(
+                    family=self.font_family
+                )
+            except tk.TclError:
+                continue
 
     # ========================================================
     def _has_timer_permission(self):
@@ -261,21 +314,98 @@ class MainWindow(TouchScrollable):
             "TLabel",
             background=p["card"],
             foreground=p["text"],
-            font=("Segoe UI", 10),
+            font=(self.font_family, 10),
         )
-        style.configure("TLabelframe", background=p["card"], bordercolor=p["border"])
+        style.configure(
+            "TLabelframe",
+            background=p["card"],
+            bordercolor=p["border"],
+            relief="solid",
+            padding=12,
+        )
         style.configure(
             "TLabelframe.Label",
             background=p["card"],
             foreground=p["accent"],
-            font=("Segoe UI", 11, "bold"),
+            font=(self.font_family, 11, "bold"),
         )
-        style.configure("TButton", font=("Segoe UI", 10), padding=(14, 8))
-        style.configure("TEntry", fieldbackground=p["bg"], foreground=p["text"])
-        style.configure("TRadiobutton", background=p["card"], foreground=p["text"], font=("Segoe UI", 10))
-        style.configure("Treeview", background=p["bg"], foreground=p["text"], fieldbackground=p["bg"], rowheight=28)
-        style.configure("Treeview.Heading", background=p["sidebar"], foreground=p["text"], font=("Segoe UI", 10, "bold"))
-        style.map("Treeview", background=[("selected", p["accent"])], foreground=[("selected", "white")])
+        style.configure(
+            "TButton",
+            font=(self.font_family, 10, "bold"),
+            padding=(12, 8),
+            borderwidth=0,
+            background=p["card"],
+            foreground=p["text"],
+        )
+        style.map(
+            "TButton",
+            background=[("active", p["active_bg"]), ("pressed", p["border"])],
+            foreground=[("disabled", p["muted"])],
+        )
+        style.configure(
+            "Accent.TButton",
+            background=p["accent"],
+            foreground="#FFFFFF",
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", p["secondary"]), ("pressed", p["accent"])],
+            foreground=[("active", "#FFFFFF")],
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground=p["card"],
+            foreground=p["text"],
+            insertcolor=p["text"],
+            bordercolor=p["border"],
+            padding=(10, 7),
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=p["card"],
+            foreground=p["text"],
+            bordercolor=p["border"],
+            padding=(8, 6),
+        )
+        style.configure(
+            "TRadiobutton",
+            background=p["card"],
+            foreground=p["text"],
+            font=(self.font_family, 10),
+        )
+        style.configure(
+            "TCheckbutton",
+            background=p["card"],
+            foreground=p["text"],
+            font=(self.font_family, 10),
+        )
+        style.configure(
+            "Treeview",
+            background=p["card"],
+            foreground=p["text"],
+            fieldbackground=p["card"],
+            rowheight=34,
+            bordercolor=p["border"],
+            font=(self.font_family, 10),
+        )
+        style.configure(
+            "Treeview.Heading",
+            background=p["sidebar"],
+            foreground=p["muted"],
+            font=(self.font_family, 9, "bold"),
+            padding=(10, 9),
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", p["accent"])],
+            foreground=[("selected", "white")],
+        )
+        style.configure(
+            "TScrollbar",
+            background=p["border"],
+            troughcolor=p["bg"],
+            bordercolor=p["bg"],
+        )
 
         if self.scroll_mode == "touch":
             style.configure("Touch.Vertical.TScrollbar", width=28, arrowsize=22)
@@ -293,6 +423,7 @@ class MainWindow(TouchScrollable):
 
         self._content_frame = tk.Frame(body, bg=self.palette["bg"])
         self._content_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
+        self._build_content_header()
 
         self._create_tabs()
         self._build_status_bar()
@@ -300,172 +431,336 @@ class MainWindow(TouchScrollable):
         if self.pages:
             self.root.after(100, lambda: self._select_page(0))
 
+    def _build_content_header(self):
+        header = tk.Frame(self._content_frame, bg=self.palette["bg"])
+        header.pack(fill="x", pady=(0, 14))
+
+        title_block = tk.Frame(header, bg=self.palette["bg"])
+        title_block.pack(side="right", fill="x", expand=True)
+        items = self._get_items()
+        initial_title = items[0][1] if items else C.APP_TITLE
+        self._page_title_label = tk.Label(
+            title_block,
+            text=initial_title,
+            bg=self.palette["bg"],
+            fg=self.palette["text"],
+            font=(self.font_family, 18, "bold"),
+            anchor="e",
+            justify="right",
+        )
+        self._page_title_label.pack(anchor="e")
+        self._page_subtitle_label = tk.Label(
+            title_block,
+            text="مدیریت یکپارچه اطلاعات و فعالیت‌های پروژه",
+            bg=self.palette["bg"],
+            fg=self.palette["muted"],
+            font=(self.font_family, 9),
+            anchor="e",
+            justify="right",
+        )
+        self._page_subtitle_label.pack(anchor="e", pady=(3, 0))
+
+        tk.Label(
+            header,
+            text="محیط کار",
+            bg=self.palette.get("active_bg", self.palette["card"]),
+            fg=self.palette["accent"],
+            font=(self.font_family, 8, "bold"),
+            padx=10,
+            pady=5,
+        ).pack(side="left", anchor="n", pady=6)
+
     # ========================================================
     # هدر
     # ========================================================
     def _build_header(self):
-        h = tk.Frame(self.root, height=70, bg=self.palette["h_start"])
+        p = self.palette
+        h = tk.Frame(self.root, height=76, bg=p["card"])
         h.pack(fill="x", side="top")
         h.pack_propagate(False)
 
-        canvas = tk.Canvas(h, height=70, highlightthickness=0, bg=self.palette["h_start"])
-        canvas.pack(fill="both", expand=True)
-
-        def paint(e=None):
-            canvas.delete("all")
-            w = canvas.winfo_width()
-            draw_h_gradient(canvas, 0, 0, w, 70, self.palette["h_start"], self.palette["h_end"])
-            canvas.create_text(80, 35, text="⚡  THE Eminence", fill="white", anchor="w", font=("Segoe UI", 20, "bold"))
-            canvas.create_text(w - 20, 55, text=f"v{C.APP_VERSION}", fill="white", anchor="e", font=("Segoe UI", 9))
-
-        canvas.bind("<Configure>", paint)
-        self.root.after(50, paint)
+        left = tk.Frame(h, bg=p["card"])
+        left.pack(side="left", fill="y", padx=(18, 12))
 
         self._toggle_sidebar_btn = tk.Label(
-            self.root,
+            left,
             text="☰",
-            bg=self.palette["h_start"],
-            fg="white",
-            font=("Segoe UI", 18, "bold"),
+            bg=p["card"],
+            fg=p["muted"],
+            font=(self.font_family, 17, "bold"),
             cursor="hand2",
             padx=10,
-            pady=6,
-            borderwidth=0,
-            highlightthickness=0,
+            pady=8,
         )
-        self._toggle_sidebar_btn.place(x=20, y=22)
+        self._toggle_sidebar_btn.pack(side="left", padx=(0, 9), pady=12)
         self._toggle_sidebar_btn.bind("<Button-1>", lambda e: self._toggle_sidebar())
-        self._toggle_sidebar_btn.bind("<Enter>", lambda e: self._toggle_sidebar_btn.config(bg=self.palette["h_end"]))
-        self._toggle_sidebar_btn.bind("<Leave>", lambda e: self._toggle_sidebar_btn.config(bg=self.palette["h_start"]))
-
-        btn_frame = tk.Frame(self.root, bg=self.palette["h_start"], height=40, width=210, borderwidth=0, highlightthickness=0)
-        btn_frame.place(relx=1.0, rely=0, x=-280, y=17, anchor="ne")
-        btn_frame.pack_propagate(False)
-
-        for icon, cmd in [
-            ("🚪", self.on_close),
-            ("📸", self._change_my_profile),
-            ("🔑", self._change_my_password),
-            ("🎨", self._show_theme_menu),
-            ("🔍", self._show_search),
-            ("📄", self.export_pdf),
-            ("📊", self.export_excel),
-        ]:
-            b = tk.Label(
-                btn_frame,
-                text=icon,
-                bg=self.palette["h_start"],
-                fg="white",
-                font=("Segoe UI", 13),
-                cursor="hand2",
-                padx=4,
-                pady=4,
-                borderwidth=0,
-                highlightthickness=0,
-            )
-            b.pack(side="right", padx=1)
-            b.bind("<Button-1>", lambda e, c=cmd: c())
-            b.bind("<Enter>", lambda e, w=b: w.config(bg=self.palette["h_end"]))
-            b.bind("<Leave>", lambda e, w=b: w.config(bg=self.palette["h_start"]))
-
-        self._bell_label = tk.Label(
-            btn_frame, text="🔔", bg=self.palette["h_start"], fg="white",
-            font=("Segoe UI", 13), cursor="hand2",
-            padx=4, pady=4, borderwidth=0, highlightthickness=0,
+        self._toggle_sidebar_btn.bind(
+            "<Enter>", lambda e: self._toggle_sidebar_btn.config(bg=p["active_bg"])
         )
-        self._bell_label.pack(side="right", padx=1)
-        self._bell_label.bind("<Button-1>", lambda e: self._show_notifications())
-        self._bell_label.bind("<Enter>", lambda e: self._bell_label.config(bg=self.palette["h_end"]))
-        self._bell_label.bind("<Leave>", lambda e: self._bell_label.config(bg=self.palette["h_start"]))
+        self._toggle_sidebar_btn.bind(
+            "<Leave>", lambda e: self._toggle_sidebar_btn.config(bg=p["card"])
+        )
+
+        brand = tk.Frame(left, bg=p["card"])
+        brand.pack(side="left", pady=12)
+        tk.Label(
+            brand,
+            text="⚡",
+            bg=p["card"],
+            fg=p["accent"],
+            font=(self.font_family, 22, "bold"),
+        ).pack(side="left", padx=(0, 8))
+        brand_text = tk.Frame(brand, bg=p["card"])
+        brand_text.pack(side="left", anchor="w")
+        tk.Label(
+            brand_text,
+            text="THE Eminence",
+            bg=p["card"],
+            fg=p["text"],
+            font=(self.font_family, 12, "bold"),
+            anchor="w",
+        ).pack(anchor="w")
+        tk.Label(
+            brand_text,
+            text=f"نسخه {C.APP_VERSION}",
+            bg=p["card"],
+            fg=p["muted"],
+            font=(self.font_family, 8),
+            anchor="w",
+        ).pack(anchor="w")
+
+        right = tk.Frame(h, bg=p["card"])
+        right.pack(side="right", fill="y", padx=(10, 18))
+
+        def action_label(parent, text, command, width=None):
+            widget = tk.Label(
+                parent,
+                text=text,
+                bg=p["card"],
+                fg=p["muted"],
+                font=(self.font_family, 13),
+                cursor="hand2",
+                padx=10,
+                pady=8,
+                width=width,
+            )
+            widget.pack(side="right", pady=12)
+            widget.bind("<Button-1>", lambda e: command())
+            widget.bind(
+                "<Enter>", lambda e, w=widget: w.config(bg=p["active_bg"], fg=p["accent"])
+            )
+            widget.bind(
+                "<Leave>", lambda e, w=widget: w.config(bg=p["card"], fg=p["muted"])
+            )
+            return widget
 
         if self.current_user:
-            un = self.current_user["username"]
+            un = self.current_user.get("full_name") or self.current_user["username"]
             role = {"admin": "مدیر", "engineer": "مهندس", "viewer": "ناظر"}.get(self.current_user["role"], "")
-            user_text = f"{un}  ({role})"
+            profile = tk.Frame(right, bg=p["card"], cursor="hand2")
+            profile.pack(side="right", padx=(8, 0), pady=10)
 
             from electrocalc.utils.avatar import get_avatar
-            avatar = get_avatar(self.current_user, 40)
+            avatar = get_avatar(self.current_user, 36)
             if avatar:
                 lbl_av = tk.Label(
-                    self.root,
+                    profile,
                     image=avatar,
-                    bg=self.palette["h_start"],
+                    bg=p["card"],
                     cursor="hand2",
                     borderwidth=0,
                     highlightthickness=0,
                 )
                 lbl_av.image = avatar
                 self._avatar_ref = avatar
-                lbl_av.place(relx=1.0, rely=0, x=-15, y=35, anchor="e")
-                lbl_av.bind("<Button-1>", lambda e: self._change_my_profile())
+                lbl_av.pack(side="right", padx=(0, 8))
+            profile_text = tk.Frame(profile, bg=p["card"])
+            profile_text.pack(side="right")
+            tk.Label(
+                profile_text,
+                text=un,
+                bg=p["card"],
+                fg=p["text"],
+                font=(self.font_family, 9, "bold"),
+                anchor="e",
+                justify="right",
+            ).pack(anchor="e")
+            tk.Label(
+                profile_text,
+                text=role,
+                bg=p["card"],
+                fg=p["muted"],
+                font=(self.font_family, 8),
+                anchor="e",
+                justify="right",
+            ).pack(anchor="e")
+            for widget in (
+                profile,
+                *profile.winfo_children(),
+                *profile_text.winfo_children(),
+            ):
+                widget.bind("<Button-1>", lambda e: self._change_my_profile())
 
-            lbl_user = tk.Label(
-                self.root,
-                text=user_text,
-                bg=self.palette["h_start"],
-                fg="white",
-                font=("Segoe UI", 11, "bold"),
-            )
-            lbl_user.place(relx=1.0, rely=0, x=-65, y=22, anchor="e")
+        self._bell_label = action_label(
+            right,
+            "🔔",
+            self._show_notifications,
+            width=3,
+        )
+        action_label(right, "⋯", self._show_header_menu, width=3)
 
         if self._has_timer_permission():
-            timer_frame = tk.Frame(self.root, bg=self.palette["h_start"])
-            timer_frame.place(x=280, y=18)
+            timer_frame = tk.Frame(
+                h,
+                bg=p["active_bg"],
+                padx=9,
+                pady=5,
+            )
+            timer_frame.pack(side="right", padx=(0, 12), pady=14)
 
             self._change_btn = tk.Label(
                 timer_frame,
-                text="🔄  تغییر پروژه",
-                bg=self.palette["h_start"],
-                fg="white",
-                font=("Segoe UI", 10, "bold"),
+                text="تغییر پروژه",
+                bg=p["active_bg"],
+                fg=p["accent"],
+                font=(self.font_family, 9, "bold"),
                 cursor="hand2",
-                padx=12,
-                pady=6,
-                borderwidth=1,
-                relief="solid",
+                padx=8,
             )
-            self._change_btn.pack(side="right", padx=6)
+            self._change_btn.pack(side="right", padx=(8, 0))
             self._change_btn.bind("<Button-1>", lambda e: self._change_project())
-            self._change_btn.bind("<Enter>", lambda e: self._change_btn.config(bg=self.palette["h_end"]))
-            self._change_btn.bind("<Leave>", lambda e: self._change_btn.config(bg=self.palette["h_start"]))
+            self._change_btn.bind(
+                "<Enter>", lambda e: self._change_btn.config(fg=p["secondary"])
+            )
+            self._change_btn.bind(
+                "<Leave>", lambda e: self._change_btn.config(fg=p["accent"])
+            )
 
             self._proj_label = tk.Label(
                 timer_frame,
-                text="📁  بدون پروژه",
-                bg=self.palette["h_start"],
-                fg="white",
-                font=("Segoe UI", 10),
-                padx=8,
+                text="بدون پروژه",
+                bg=p["active_bg"],
+                fg=p["muted"],
+                font=(self.font_family, 9),
             )
             self._proj_label.pack(side="right", padx=4)
 
             self._timer_label = tk.Label(
                 timer_frame,
-                text="⏱  00:00:00",
-                bg=self.palette["h_start"],
-                fg="white",
-                font=("Consolas", 14, "bold"),
-                padx=8,
+                text="00:00:00",
+                bg=p["active_bg"],
+                fg=p["text"],
+                font=("Consolas", 10, "bold"),
+                padx=4,
             )
             self._timer_label.pack(side="right", padx=4)
+
+        search_frame = tk.Frame(
+            h,
+            bg=p["bg"],
+            highlightbackground=p["border"],
+            highlightthickness=1,
+        )
+        search_frame.pack(side="right", fill="x", expand=True, padx=10, pady=15)
+        search_hint = tk.Label(
+            search_frame,
+            text="جست‌وجو در پروژه‌ها، گزارش‌ها و کاربران",
+            bg=p["bg"],
+            fg=p["muted"],
+            font=(self.font_family, 9),
+            anchor="e",
+            justify="right",
+            cursor="hand2",
+            padx=12,
+            pady=8,
+        )
+        search_hint.pack(side="right", fill="x", expand=True)
+        search_icon = tk.Label(
+            search_frame,
+            text="🔍",
+            bg=p["bg"],
+            fg=p["accent"],
+            font=(self.font_family, 12),
+            cursor="hand2",
+            padx=10,
+        )
+        search_icon.pack(side="right")
+        for widget in (search_frame, search_hint, search_icon):
+            widget.bind("<Button-1>", lambda e: self._show_search())
+        search_frame.bind("<Enter>", lambda e: search_frame.config(bg=p["active_bg"]))
+        search_frame.bind("<Leave>", lambda e: search_frame.config(bg=p["bg"]))
+
+    def _show_header_menu(self):
+        menu = tk.Menu(
+            self.root,
+            tearoff=0,
+            bg=self.palette["card"],
+            fg=self.palette["text"],
+            activebackground=self.palette["active_bg"],
+            activeforeground=self.palette["accent"],
+            font=(self.font_family, 10),
+        )
+        if self.current_user:
+            menu.add_command(label="ویرایش پروفایل", command=self._change_my_profile)
+            menu.add_command(label="تغییر رمز عبور", command=self._change_my_password)
+            menu.add_separator()
+        menu.add_command(label="تغییر پوسته", command=self._show_theme_menu)
+        menu.add_command(label="خروجی PDF", command=self.export_pdf)
+        menu.add_command(label="خروجی Excel", command=self.export_excel)
+        menu.add_separator()
+        menu.add_command(label="خروج از حساب", command=self.on_close)
+        try:
+            menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+        finally:
+            menu.grab_release()
 
     # ========================================================
     # نوار کناری
     # ========================================================
     def _build_sidebar(self, parent):
         collapsed = self._sidebar_collapsed
-        width = 60 if collapsed else 220
+        width = 72 if collapsed else 248
 
         side = tk.Frame(parent, bg=self.palette["sidebar"], width=width)
         side.pack(side="right", fill="y")
         side.pack_propagate(False)
         self._sidebar_frame = side
 
-        logo = tk.Label(side, text="⚡", font=("Segoe UI", 28), bg=self.palette["sidebar"], fg=self.palette["accent"], pady=15)
-        logo.pack(fill="x")
+        brand = tk.Frame(side, bg=self.palette["sidebar"], height=76)
+        brand.pack(fill="x", pady=(8, 0))
+        brand.pack_propagate(False)
+        logo = tk.Label(
+            brand,
+            text="⚡",
+            font=(self.font_family, 24, "bold"),
+            bg=self.palette["sidebar"],
+            fg=self.palette["accent"],
+        )
+        if collapsed:
+            logo.pack(expand=True)
+        else:
+            logo.pack(side="right", padx=(0, 14), pady=8)
+            brand_text = tk.Frame(brand, bg=self.palette["sidebar"])
+            brand_text.pack(side="right", fill="y", expand=True, pady=14)
+            tk.Label(
+                brand_text,
+                text="THE Eminence",
+                bg=self.palette["sidebar"],
+                fg=self.palette["text"],
+                font=(self.font_family, 10, "bold"),
+                anchor="e",
+            ).pack(anchor="e")
+            tk.Label(
+                brand_text,
+                text="میزکار مدیریت پروژه",
+                bg=self.palette["sidebar"],
+                fg=self.palette["muted"],
+                font=(self.font_family, 8),
+                anchor="e",
+            ).pack(anchor="e")
 
         sep = tk.Frame(side, height=1, bg=self.palette["border"])
-        sep.pack(fill="x", padx=15, pady=(0, 10))
+        sep.pack(fill="x", padx=16, pady=(0, 12))
 
         scroll_container = tk.Frame(side, bg=self.palette["sidebar"])
         scroll_container.pack(fill="both", expand=True)
@@ -484,9 +779,9 @@ class MainWindow(TouchScrollable):
                 orient="vertical",
                 command=canvas.yview,
                 width=6,
-                troughcolor="#e5e7eb",
-                bg="#9ca3af",
-                activebackground="#6b7280",
+                troughcolor=self.palette["bg"],
+                bg=self.palette["border"],
+                activebackground=self.palette["muted"],
                 borderwidth=0,
                 highlightthickness=0,
                 relief="flat",
@@ -556,8 +851,14 @@ class MainWindow(TouchScrollable):
 
         if not collapsed:
             bottom = tk.Frame(side, bg=self.palette["sidebar"])
-            bottom.pack(side="bottom", fill="x", pady=8)
-            tk.Label(bottom, text=f"v{C.APP_VERSION}", bg=self.palette["sidebar"], fg=self.palette["muted"], font=("Segoe UI", 9)).pack()
+            bottom.pack(side="bottom", fill="x", pady=10)
+            tk.Label(
+                bottom,
+                text=f"نسخه {C.APP_VERSION}",
+                bg=self.palette["sidebar"],
+                fg=self.palette["muted"],
+                font=(self.font_family, 8),
+            ).pack()
 
     # ========================================================
     # تب‌های مشترک
@@ -674,8 +975,8 @@ class MainWindow(TouchScrollable):
 
     def _placeholder_page(self, title, error):
         frame = tk.Frame(self._content_frame, bg=self.palette["bg"], padx=20, pady=20)
-        tk.Label(frame, text=f"⚠️  تب «{title}» بارگذاری نشد", font=("Segoe UI", 16, "bold"), bg=self.palette["bg"], fg=self.palette["danger"], anchor="e").pack(anchor="e", pady=(0, 15))
-        tk.Label(frame, text="خطا:", font=("Segoe UI", 11, "bold"), bg=self.palette["bg"], fg=self.palette["text"], anchor="e").pack(anchor="e", pady=(0, 5))
+        tk.Label(frame, text=f"⚠️  تب «{title}» بارگذاری نشد", font=(self.font_family, 16, "bold"), bg=self.palette["bg"], fg=self.palette["danger"], anchor="e", justify="right").pack(anchor="e", pady=(0, 15))
+        tk.Label(frame, text="خطا:", font=(self.font_family, 11, "bold"), bg=self.palette["bg"], fg=self.palette["text"], anchor="e", justify="right").pack(anchor="e", pady=(0, 5))
         tk.Label(frame, text=error, font=("Consolas", 9), bg=self.palette["bg"], fg=self.palette["danger"], wraplength=700, justify="right", anchor="e").pack(anchor="e", pady=(0, 15))
         return frame
 
@@ -697,6 +998,7 @@ class MainWindow(TouchScrollable):
         self._build_sidebar(self._body)
         self._content_frame = tk.Frame(self._body, bg=self.palette["bg"])
         self._content_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
+        self._build_content_header()
         self._create_tabs()
 
         if 0 <= prev_page < len(self.pages):
@@ -709,7 +1011,15 @@ class MainWindow(TouchScrollable):
         bar.pack(fill="x", side="bottom")
         bar.pack_propagate(False)
         self.status_var = tk.StringVar(value="آماده")
-        tk.Label(bar, textvariable=self.status_var, bg=self.palette["status_bar"], fg=self.palette["muted"], font=("Segoe UI", 9), anchor="w").pack(side="left", padx=15)
+        tk.Label(
+            bar,
+            textvariable=self.status_var,
+            bg=self.palette["status_bar"],
+            fg=self.palette["muted"],
+            font=(self.font_family, 8),
+            anchor="e",
+            justify="right",
+        ).pack(side="right", padx=15)
 
     # ========================================================
     # خروجی PDF/Excel
@@ -851,9 +1161,9 @@ class MainWindow(TouchScrollable):
             from electrocalc.core import notifications as notif_module
             count = notif_module.count_unread(self.current_user["username"])
             if count > 0:
-                self._bell_label.config(text=f"🔔 {count}", fg="#ffdd00")
+                self._bell_label.config(text=f"🔔 {count}", fg=self.palette["accent"])
             else:
-                self._bell_label.config(text="🔔", fg="white")
+                self._bell_label.config(text="🔔", fg=self.palette["muted"])
         except Exception:
             pass
 
@@ -872,7 +1182,15 @@ class MainWindow(TouchScrollable):
     # تم
     # ========================================================
     def _show_theme_menu(self):
-        menu = tk.Menu(self.root, tearoff=0)
+        menu = tk.Menu(
+            self.root,
+            tearoff=0,
+            bg=self.palette["card"],
+            fg=self.palette["text"],
+            activebackground=self.palette["active_bg"],
+            activeforeground=self.palette["accent"],
+            font=(self.font_family, 10),
+        )
         for key in themes_module.get_names():
             theme = themes_module.THEMES[key]
             prefix = "✅  " if key == self.current_theme else "    "
@@ -1019,13 +1337,25 @@ class MainWindow(TouchScrollable):
         py = self.root.winfo_rooty() + self.root.winfo_height() // 2 - 240
         win.geometry(f"420x480+{px}+{py}")
 
-        tk.Label(win, text="📁  انتخاب پروژه", font=("Segoe UI", 16, "bold"), bg=self.palette["bg"], fg=self.palette["h_start"]).pack(pady=(20, 8))
-        tk.Label(win, text="پروژه‌ای که روش کار می‌کنی را انتخاب کن", font=("Segoe UI", 9), bg=self.palette["bg"], fg=self.palette["muted"]).pack(pady=(0, 15))
+        tk.Label(win, text="📁  انتخاب پروژه", font=(self.font_family, 16, "bold"), bg=self.palette["bg"], fg=self.palette["accent"], anchor="e", justify="right").pack(fill="x", padx=24, pady=(20, 8))
+        tk.Label(win, text="پروژه‌ای که روش کار می‌کنی را انتخاب کن", font=(self.font_family, 9), bg=self.palette["bg"], fg=self.palette["muted"], anchor="e", justify="right").pack(fill="x", padx=24, pady=(0, 15))
 
         list_frame = tk.Frame(win, bg=self.palette["bg"])
         list_frame.pack(fill="both", expand=True, padx=30)
 
-        listbox = tk.Listbox(list_frame, font=("Segoe UI", 12), activestyle="none", selectbackground=self.palette["h_start"])
+        listbox = tk.Listbox(
+            list_frame,
+            font=(self.font_family, 11),
+            activestyle="none",
+            selectbackground=self.palette["accent"],
+            selectforeground="#FFFFFF",
+            justify="right",
+            bg=self.palette["card"],
+            fg=self.palette["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=self.palette["border"],
+        )
         sb = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
         listbox.configure(yscrollcommand=sb.set)
         sb.pack(side="left", fill="y")
@@ -1132,6 +1462,11 @@ class MainWindow(TouchScrollable):
             self.pages[idx].pack(fill="both", expand=True)
             self.sidebar_buttons[idx].set_active(True)
             self.current_page = idx
+            title = self._tab_classes[idx][0]
+            self._page_title_label.config(text=title)
+            self._page_subtitle_label.config(
+                text=f"مدیریت و مشاهدهٔ اطلاعات بخش {title}"
+            )
         except Exception as e:
             log.error(f"خطا در نمایش صفحه {idx}: {e}")
 
