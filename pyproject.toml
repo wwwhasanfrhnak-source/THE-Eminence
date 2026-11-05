@@ -1,0 +1,21 @@
+# pyproject.toml
+[project]
+name = "the-eminence"
+version = "0.1.0"
+description = "Professional Electrical Management System"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "THE Eminence Contributors" }]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
