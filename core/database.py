@@ -3,9 +3,9 @@
 
 import sqlite3
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from config.constants import (
     DEFAULT_ADMIN_NAME,
@@ -47,6 +47,7 @@ class Database:
                 self.connection.close()
             self.connection = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
             self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA foreign_keys = ON")
             schema_path = Path(__file__).with_name("schema.sql")
             self.connection.executescript(schema_path.read_text(encoding="utf-8"))

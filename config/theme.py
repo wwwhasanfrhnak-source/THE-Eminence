@@ -1,19 +1,41 @@
-# config/theme.py
-"""Dark dashboard palette and typography."""
+"""Compatibility exports for the shared UI design tokens."""
 
-BG_MAIN = "#0b0f19"
-BG_SIDEBAR = "#0b0f19"
-BG_CARD = "#111827"
-BG_HOVER = "#1e293b"
-PRIMARY = "#f97316"
-SECONDARY = "#3b82f6"
-SUCCESS = "#10b981"
-WARNING = "#f59e0b"
-DANGER = "#ef4444"
-PURPLE = "#8b5cf6"
-TEXT_PRIMARY = "#ffffff"
-TEXT_SECONDARY = "#94a3b8"
-TEXT_MUTED = "#64748b"
-BORDER = "#1e2633"
+from ui.theme import (
+    BG_HOVER,
+    BG_MAIN,
+    BG_SIDEBAR,
+    BORDER,
+    DANGER,
+    FONT_FALLBACKS,
+    PRIMARY,
+    PURPLE,
+    SECONDARY,
+    SUCCESS,
+    TEXT_MUTED,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    WARNING,
+)
+from ui.theme import (
+    BG_SURFACE as BG_CARD,
+)
 
-FONT_CANDIDATES = ("Vazirmatn", "Segoe UI", "Arial")
+__all__ = [
+    "BG_CARD",
+    "BG_HOVER",
+    "BG_MAIN",
+    "BG_SIDEBAR",
+    "BORDER",
+    "DANGER",
+    "FONT_CANDIDATES",
+    "PRIMARY",
+    "PURPLE",
+    "SECONDARY",
+    "SUCCESS",
+    "TEXT_MUTED",
+    "TEXT_PRIMARY",
+    "TEXT_SECONDARY",
+    "WARNING",
+]
+
+FONT_CANDIDATES = FONT_FALLBACKS

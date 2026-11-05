@@ -1,27 +1,14 @@
-# ui/views/dashboard_view.py
-"""Three-row management dashboard with KPI, finance and schedule cards."""
+"""Responsive, data-backed dashboard for the workspace."""
 
 import tkinter as tk
 from datetime import date
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-
-from config.theme import (
-    BG_CARD,
-    BG_MAIN,
-    BORDER,
-    PRIMARY,
-    PURPLE,
-    SECONDARY,
-    SUCCESS,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-)
+from config.theme import BG_CARD, BG_MAIN, PRIMARY, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY
 from core.repository import Repository
+from ui.components.charts import DonutChart, LineChart
 from ui.components.kpi_card import KPICard
 from ui.components.modern_card import ModernCard
+from ui.theme import BORDER, PURPLE, SECONDARY, SUCCESS
 from utils.formatters import format_currency
 
 
@@ -30,213 +17,233 @@ class DashboardView(tk.Frame):
         super().__init__(master, bg=BG_MAIN)
         self.font_family = font_family
         self.repository = repository or Repository()
-        self._photos = []
         self._build()
 
-    def _title(self, parent, text, x=0, y=0, size=12):
-        return tk.Label(
-            parent, text=text, bg=BG_CARD, fg=TEXT_PRIMARY, font=(self.font_family, size, "bold")
-        ).place(x=x, y=y)
-
     def _build(self):
-        width = 1100
+        header = tk.Frame(self, bg=BG_MAIN)
+        header.pack(fill="x", pady=(0, 16))
         tk.Label(
-            self,
-            text="Good morning, welcome back 👋",
+            header,
+            text="Workspace overview",
             bg=BG_MAIN,
             fg=TEXT_PRIMARY,
             font=(self.font_family, 21, "bold"),
-        ).place(x=0, y=0)
+        ).pack(anchor="w")
         tk.Label(
-            self,
-            text=f"Here is your business overview · {date.today():%A, %B %d, %Y}",
+            header,
+            text=f"Your business at a glance · {date.today():%A, %B %d, %Y}",
             bg=BG_MAIN,
             fg=TEXT_SECONDARY,
             font=(self.font_family, 9),
-        ).place(x=2, y=39)
+        ).pack(anchor="w", pady=(4, 0))
+
         stats = self.repository.dashboard_stats()
+        cards = tk.Frame(self, bg=BG_MAIN)
+        cards.pack(fill="x", pady=(0, 16))
+        for column in range(4):
+            cards.grid_columnconfigure(column, weight=1, uniform="kpi")
         kpis = (
             (
-                "Total Customers",
+                "Customers",
                 f"{stats['customers']:,}",
-                "+12.8% this month",
+                "In your workspace",
                 PRIMARY,
-                [2, 4, 3, 5, 4, 7, 8],
+                [2, 4, 3, 5, 6, 8],
             ),
             (
-                "Active Projects",
+                "Active projects",
                 f"{stats['projects']:,}",
-                "+8.2% this month",
+                "Across all statuses",
                 SECONDARY,
-                [3, 2, 4, 4, 6, 5, 7],
+                [3, 2, 4, 5, 6, 7],
             ),
             (
-                "Total Revenue",
+                "Total revenue",
                 format_currency(float(stats["revenue"])),
-                "+14.3% this month",
+                "Recorded income",
                 SUCCESS,
-                [2, 3, 3, 5, 6, 5, 8],
+                [2, 3, 3, 5, 6, 8],
             ),
             (
-                "Team Members",
+                "Team members",
                 f"{stats['users']:,}",
-                "Across your workspace",
+                "Registered accounts",
                 PURPLE,
-                [3, 3, 4, 3, 5, 5, 6],
+                [3, 3, 4, 4, 5, 6],
             ),
         )
         self.kpi_cards = []
-        for index, (title, value, change, color, series) in enumerate(kpis):
-            card = KPICard(self, title, value, change, color, series, self.font_family)
-            card.place(x=index * 270, y=70)
+        for column, values in enumerate(kpis):
+            card = KPICard(cards, *values, self.font_family)
+            card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
             self.kpi_cards.append(card)
 
-        chart_width = 560
-        side_width = width - chart_width - 70
-        chart = ModernCard(self, chart_width, 306, shadow=True)
-        chart.place(x=0, y=220)
-        self._title(chart.body, "Booking vs Revenue", y=0)
-        tk.Label(
-            chart.body,
-            text="Monthly performance",
-            bg=BG_CARD,
-            fg=TEXT_MUTED,
-            font=(self.font_family, 8),
-        ).place(x=0, y=24)
-        self._line_chart(chart.body, chart_width - 32, 180)
+        charts = tk.Frame(self, bg=BG_MAIN)
+        charts.pack(fill="both", expand=True)
+        charts.grid_columnconfigure(0, weight=3, uniform="charts")
+        charts.grid_columnconfigure(1, weight=2, uniform="charts")
+        charts.grid_rowconfigure(0, weight=3)
+        charts.grid_rowconfigure(1, weight=2)
 
-        donut = ModernCard(self, side_width, 306, shadow=True)
-        donut.place(x=chart_width + 20, y=220)
-        self._title(donut.body, "Device by User", y=0)
-        tk.Label(
-            donut.body,
-            text="Active users by device",
-            bg=BG_CARD,
-            fg=TEXT_MUTED,
-            font=(self.font_family, 8),
-        ).place(x=0, y=24)
-        self._donut_chart(donut.body, side_width - 40, 165)
+        revenue_card = ModernCard(charts, width=650, height=330, shadow=True)
+        revenue_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
+        self._card_heading(revenue_card.body, "Revenue performance", "Monthly income this year")
+        months, revenue = self._monthly_revenue()
+        self.revenue_chart = LineChart(
+            revenue_card.body,
+            self.font_family,
+            height=230,
+            labels=months,
+            series={"Income": revenue},
+            colors=(PRIMARY,),
+        )
+        self.revenue_chart.pack(fill="both", expand=True, pady=(42, 0))
 
-        meeting = ModernCard(self, chart_width, 195, shadow=True)
-        meeting.place(x=0, y=490)
-        self._title(meeting.body, "Next Meeting", y=0)
+        status_card = ModernCard(charts, width=390, height=330, shadow=True)
+        status_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
+        self._card_heading(status_card.body, "Project status", "Portfolio distribution")
+        status_labels, status_values = self._project_status()
+        self.status_chart = DonutChart(
+            status_card.body,
+            self.font_family,
+            height=220,
+            labels=status_labels,
+            values=status_values,
+            colors=(PRIMARY, SECONDARY, SUCCESS, PURPLE),
+            center_text="Projects",
+        )
+        self.status_chart.pack(fill="both", expand=True, pady=(38, 0))
+
+        recent_card = ModernCard(charts, width=650, height=200, shadow=True)
+        recent_card.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+        self._card_heading(
+            recent_card.body, "Recent projects", "Latest additions to your portfolio"
+        )
+        self._recent_projects(recent_card.body)
+
+        insight_card = ModernCard(charts, width=390, height=200, shadow=True)
+        insight_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
+        self._card_heading(insight_card.body, "Workspace health", "A quick operational snapshot")
+        self._health_summary(insight_card.body, stats)
+
+    def _card_heading(self, parent, title, subtitle):
         tk.Label(
-            meeting.body,
-            text="Today's schedule",
+            parent,
+            text=title,
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=(self.font_family, 11, "bold"),
+            anchor="w",
+        ).place(x=0, y=0)
+        tk.Label(
+            parent,
+            text=subtitle,
             bg=BG_CARD,
             fg=TEXT_MUTED,
             font=(self.font_family, 8),
+            anchor="w",
         ).place(x=0, y=23)
-        self._meeting_slot(
-            meeting.body, "10:30 AM", "Project kickoff · Skyline Tower", "👩🏻‍💼", PRIMARY, 55
-        )
-        self._meeting_slot(
-            meeting.body, "02:00 PM", "Electrical review · North District", "👨🏽‍💼", SECONDARY, 112
-        )
 
-        events = ModernCard(self, side_width, 195, shadow=True)
-        events.place(x=chart_width + 20, y=490)
-        self._title(events.body, "Your Upcoming Event", y=0)
-        tk.Label(
-            events.body,
-            text="Mark your calendar",
-            bg=BG_CARD,
-            fg=TEXT_MUTED,
-            font=(self.font_family, 8),
-        ).place(x=0, y=23)
-        self._event_item(
-            events.body, "Electrical Safety Inspection", "NOV 08 · 09:00 AM", PRIMARY, 49
+    def _monthly_revenue(self):
+        rows = self.repository.db.fetch_all(
+            "SELECT strftime('%m', tx_date) AS month, SUM(amount) AS total "
+            "FROM transactions WHERE type = ? AND strftime('%Y', tx_date) = strftime('%Y', 'now') "
+            "GROUP BY month ORDER BY month",
+            ("income",),
         )
-        self._event_item(
-            events.body, "Project Milestone Review", "NOV 12 · 02:30 PM", SECONDARY, 96
+        monthly = {int(row["month"]): float(row["total"] or 0) for row in rows if row["month"]}
+        labels = (
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
         )
-        self._event_item(events.body, "Monthly Team Sync", "NOV 18 · 10:00 AM", PURPLE, 143)
+        return labels, [monthly.get(index, 0.0) for index in range(1, 13)]
 
-    def _line_chart(self, parent, width, height):
-        figure = Figure(figsize=(max(4.0, width / 100), 2.15), dpi=90, facecolor=BG_CARD)
-        axis = figure.add_subplot(111)
-        axis.set_facecolor(BG_CARD)
-        months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug")
-        booking = [18, 25, 22, 32, 29, 41, 37, 49]
-        revenue = [14, 18, 27, 24, 35, 32, 45, 54]
-        axis.plot(months, booking, color=PRIMARY, linewidth=2.2, marker="o", markersize=3)
-        axis.plot(months, revenue, color=SECONDARY, linewidth=2.2, marker="o", markersize=3)
-        axis.fill_between(range(len(months)), booking, color=PRIMARY, alpha=0.07)
-        axis.fill_between(range(len(months)), revenue, color=SECONDARY, alpha=0.07)
-        axis.grid(axis="y", color=BORDER, linewidth=0.7)
-        axis.tick_params(colors=TEXT_MUTED, labelsize=8, length=0)
-        for spine in axis.spines.values():
-            spine.set_visible(False)
-        axis.set_ylim(0, 65)
-        figure.tight_layout(pad=1)
-        chart = FigureCanvasTkAgg(figure, master=parent)
-        chart.get_tk_widget().place(x=0, y=49, width=width, height=height)
-        self._photos.append(chart)
+    def _project_status(self):
+        rows = self.repository.db.fetch_all(
+            "SELECT status, COUNT(*) AS total FROM projects GROUP BY status ORDER BY status"
+        )
+        labels = [str(row["status"] or "Unspecified").replace("_", " ").title() for row in rows]
+        values = [int(row["total"]) for row in rows]
+        if not values:
+            return (), ()
+        return tuple(labels), tuple(values)
 
-    def _donut_chart(self, parent, width, height):
-        figure = Figure(figsize=(2.0, 1.8), dpi=90, facecolor=BG_CARD)
-        axis = figure.add_subplot(111)
-        axis.set_facecolor(BG_CARD)
-        axis.pie(
-            [38, 27, 20, 15],
-            startangle=90,
-            counterclock=False,
-            colors=(PRIMARY, SECONDARY, PURPLE, SUCCESS),
-            wedgeprops={"width": 0.28, "edgecolor": BG_CARD, "linewidth": 2},
+    def _recent_projects(self, parent):
+        rows = self.repository.db.fetch_all(
+            "SELECT title, status, end_date FROM projects ORDER BY id DESC LIMIT ?", (3,)
         )
-        axis.text(
-            0,
-            0,
-            "Users",
-            color=TEXT_PRIMARY,
-            ha="center",
-            va="center",
-            fontsize=10,
-            fontweight="bold",
+        if not rows:
+            tk.Label(
+                parent,
+                text="No projects yet. Add a project to see it here.",
+                bg=BG_CARD,
+                fg=TEXT_SECONDARY,
+                font=(self.font_family, 9),
+            ).place(x=0, y=58, anchor="nw")
+            return
+        for index, row in enumerate(rows):
+            y = 55 + index * 36
+            tk.Frame(parent, bg=BORDER, height=1).place(x=0, y=y + 30, relwidth=1)
+            tk.Label(
+                parent,
+                text=str(row["title"]),
+                bg=BG_CARD,
+                fg=TEXT_PRIMARY,
+                font=(self.font_family, 9, "bold"),
+                anchor="w",
+            ).place(x=0, y=y, relwidth=0.62)
+            status = str(row["status"] or "pending").replace("_", " ").title()
+            tk.Label(
+                parent,
+                text=status,
+                bg=BG_CARD,
+                fg=PRIMARY if status.lower() == "active" else SECONDARY,
+                font=(self.font_family, 8),
+                anchor="w",
+            ).place(relx=0.65, y=y, relwidth=0.2)
+            tk.Label(
+                parent,
+                text=str(row["end_date"] or "No due date"),
+                bg=BG_CARD,
+                fg=TEXT_MUTED,
+                font=(self.font_family, 8),
+                anchor="e",
+            ).place(relx=0.82, y=y, relwidth=0.18)
+
+    def _health_summary(self, parent, stats):
+        items = (
+            ("Active projects", str(stats["projects"]), PRIMARY),
+            ("Customer records", str(stats["customers"]), SECONDARY),
+            ("Team accounts", str(stats["users"]), SUCCESS),
         )
-        axis.set_axis_off()
-        figure.tight_layout(pad=0)
-        chart = FigureCanvasTkAgg(figure, master=parent)
-        chart.get_tk_widget().place(x=0, y=48, width=min(width, 210), height=height)
-        self._photos.append(chart)
-        legend = tk.Frame(parent, bg=BG_CARD)
-        legend.place(x=min(width, 216), y=68)
-        for label, count, color in (
-            ("Desktop", "38%", PRIMARY),
-            ("Mobile", "27%", SECONDARY),
-            ("Tablet", "20%", PURPLE),
-            ("Other", "15%", SUCCESS),
-        ):
-            row = tk.Frame(legend, bg=BG_CARD)
-            row.pack(anchor="w", pady=6)
-            tk.Label(row, text="●", bg=BG_CARD, fg=color, font=(self.font_family, 10)).pack(
-                side="left"
+        for index, (label, value, color) in enumerate(items):
+            y = 56 + index * 37
+            tk.Label(parent, text="●", bg=BG_CARD, fg=color, font=(self.font_family, 10)).place(
+                x=0, y=y
             )
             tk.Label(
-                row, text=f"  {label}", bg=BG_CARD, fg=TEXT_SECONDARY, font=(self.font_family, 8)
-            ).pack(side="left")
+                parent,
+                text=label,
+                bg=BG_CARD,
+                fg=TEXT_SECONDARY,
+                font=(self.font_family, 8),
+                anchor="w",
+            ).place(x=20, y=y + 1)
             tk.Label(
-                row, text=count, bg=BG_CARD, fg=TEXT_PRIMARY, font=(self.font_family, 8, "bold")
-            ).pack(side="left", padx=(8, 0))
-
-    def _meeting_slot(self, parent, time, title, avatar, color, y):
-        tk.Label(parent, text=avatar, bg=BG_CARD, fg=color, font=(self.font_family, 17)).place(
-            x=2, y=y
-        )
-        tk.Label(parent, text=time, bg=BG_CARD, fg=color, font=(self.font_family, 9, "bold")).place(
-            x=50, y=y + 1
-        )
-        tk.Label(parent, text=title, bg=BG_CARD, fg=TEXT_PRIMARY, font=(self.font_family, 9)).place(
-            x=138, y=y + 1
-        )
-
-    def _event_item(self, parent, title, when, color, y):
-        tk.Label(parent, text="●", bg=BG_CARD, fg=color, font=(self.font_family, 12)).place(
-            x=2, y=y
-        )
-        tk.Label(
-            parent, text=title, bg=BG_CARD, fg=TEXT_PRIMARY, font=(self.font_family, 9, "bold")
-        ).place(x=24, y=y)
-        tk.Label(parent, text=when, bg=BG_CARD, fg=TEXT_MUTED, font=(self.font_family, 8)).place(
-            x=24, y=y + 22
-        )
+                parent,
+                text=value,
+                bg=BG_CARD,
+                fg=TEXT_PRIMARY,
+                font=(self.font_family, 9, "bold"),
+                anchor="e",
+            ).place(relx=0.82, y=y, relwidth=0.16)

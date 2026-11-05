@@ -31,7 +31,12 @@ class Router:
         factory = views.get(key)
         if factory is None:
             raise ValueError(f"Unknown route: {key}")
-        if self.current_view is not None:
-            self.current_view.destroy()
-        self.current_view = factory()
-        self.current_view.pack(fill="both", expand=True)
+        next_view = factory()
+        try:
+            if self.current_view is not None:
+                self.current_view.destroy()
+            next_view.pack(fill="both", expand=True)
+        except Exception:
+            next_view.destroy()
+            raise
+        self.current_view = next_view

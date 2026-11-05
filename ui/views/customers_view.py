@@ -1,10 +1,12 @@
 # ui/views/customers_view.py
 """Customer directory with create, edit, and delete actions."""
 
+import sqlite3
 import tkinter as tk
 from tkinter import messagebox
 
 from config.theme import BG_CARD, BG_MAIN, PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY
+from core.exceptions import EminenceError
 from core.services.customer_service import CustomerService
 from ui.components.data_table import DataTable
 from ui.components.modern_card import ModernCard
@@ -129,8 +131,8 @@ class CustomersView(tk.Frame):
             try:
                 self.service.create(values, self.user.id)
                 self.refresh()
-                Toast.show(self, "Customer added", self.font_family)
-            except Exception as exc:
+                Toast.show(self, "Customer added", self.font_family, kind="success")
+            except (EminenceError, LookupError, sqlite3.Error) as exc:
                 messagebox.showerror("Unable to add customer", str(exc), parent=self)
 
     def edit(self):
@@ -144,7 +146,7 @@ class CustomersView(tk.Frame):
             try:
                 self.service.update(record_id, values, self.user.id)
                 self.refresh()
-            except Exception as exc:
+            except (EminenceError, LookupError, sqlite3.Error) as exc:
                 messagebox.showerror("Unable to update customer", str(exc), parent=self)
 
     def delete(self):
@@ -156,5 +158,5 @@ class CustomersView(tk.Frame):
             try:
                 self.service.delete(record_id, self.user.id)
                 self.refresh()
-            except Exception as exc:
+            except (EminenceError, LookupError, sqlite3.Error) as exc:
                 messagebox.showerror("Unable to delete customer", str(exc), parent=self)

@@ -31,13 +31,20 @@ class DataTable(tk.Frame):
         )
         style.map("Eminence.Treeview", background=[("selected", "#28364a")])
         self.tree = ttk.Treeview(self, columns=columns, show="headings", style="Eminence.Treeview")
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        vertical_scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        horizontal_scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(
+            yscrollcommand=vertical_scrollbar.set,
+            xscrollcommand=horizontal_scrollbar.set,
+        )
         for column, heading in zip(columns, headings):
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=140, anchor="w", stretch=True)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vertical_scrollbar.grid(row=0, column=1, sticky="ns")
+        horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
     def set_rows(self, rows):
         self.tree.delete(*self.tree.get_children())
