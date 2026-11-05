@@ -18,12 +18,13 @@ DEFAULT_ICONS = {
 THEMES = {
     "light": {
         "name": "☀️  روشن",
-        "bg": "#f8fafc", "sidebar": "#ffffff", "card": "#ffffff",
-        "border": "#e2e8f0", "accent": "#7c3aed",
-        "text": "#0f172a", "muted": "#64748b",
-        "h_start": "#7c3aed", "h_end": "#06b6d4",
+        "bg": "#F7F9FC", "sidebar": "#FFFFFF", "card": "#FFFFFF",
+        "border": "#E5EAF2", "accent": "#2563EB",
+        "secondary": "#0891B2", "active_bg": "#EFF6FF",
+        "text": "#172033", "muted": "#66758B",
+        "h_start": "#2563EB", "h_end": "#0891B2",
         "success": "#10b981", "danger": "#ef4444",
-        "status_bar": "#e5e7eb",
+        "status_bar": "#FFFFFF",
         "icons": DEFAULT_ICONS,
     },
     "dark": {
@@ -225,7 +226,10 @@ THEMES = {
 
 
 def get_palette(name):
-    return THEMES.get(name, THEMES["light"])
+    palette = dict(THEMES.get(name, THEMES["light"]))
+    palette.setdefault("secondary", palette["h_end"])
+    palette.setdefault("active_bg", palette["card"])
+    return palette
 
 
 def get_names():
