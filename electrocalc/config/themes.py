@@ -1,5 +1,5 @@
 """تم‌های رنگی برنامه — ۱۴ تم + آیکون‌های اختصاصی."""
-
+from electrocalc.ui.design_system import premium_palette
 
 # آیکون‌های پیش‌فرض
 DEFAULT_ICONS = {
@@ -226,7 +226,8 @@ THEMES = {
 
 
 def get_palette(name):
-    palette = dict(THEMES.get(name, THEMES["light"]))
+    base = dict(THEMES.get(name, THEMES["light"]))
+    palette = base if name == "light" else premium_palette(name, base)
     palette.setdefault("secondary", palette["h_end"])
     palette.setdefault("active_bg", palette["card"])
     return palette
