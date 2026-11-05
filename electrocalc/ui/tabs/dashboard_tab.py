@@ -6,6 +6,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
+from datetime import datetime
 
 from electrocalc.config import themes as themes_module
 from electrocalc.core import dashboard as db_stats
@@ -291,14 +292,17 @@ class DashboardTab(ScrollableFrame):
     def _render_operational_stats(self, stats):
         for widget in self.kpi_row.winfo_children():
             widget.destroy()
-        entries = [("📁", "پروژه‌ها", stats["projects"], "#3867E8", "پروژه ثبت‌شده"),
-                   ("👥", "کاربران", stats["users"], "#168CCB", "کاربر فعال"),
-                   ("⏰", "ساعت کار", f"{stats['total_hours']:,.0f}", "#168A65", "ساعت ثبت‌شده"),
-                   ("💳", "هزینه‌ها", f"{stats['total_expenses']:,.0f}", "#D84C5B", "تومان"),
-                   ("📦", "ارزش مصالح", f"{stats['total_materials']:,.0f}", "#E59A26", "تومان"),
-                   ("⌛", "در انتظار", stats["pending_reports"]+stats["pending_expenses"], "#9B5DE5", "مورد نیاز پیگیری")]
+
+        entries = [("📁", "پروژه‌ها", stats["projects"], "پروژه ثبت‌شده", "#3867E8"),
+                   ("👥", "کاربران", stats["users"], "کاربر فعال", "#168CCB"),
+                   ("⏰", "ساعت کار", f"{stats['total_hours']:,.0f}", "ساعت ثبت‌شده", "#168A65"),
+                   ("💳", "هزینه‌ها", f"{stats['total_expenses']:,.0f}", "تومان", "#D84C5B"),
+                   ("📦", "ارزش مصالح", f"{stats['total_materials']:,.0f}", "تومان", "#E59A26"),
+                   ("⌛", "در انتظار", stats["pending_reports"]+stats["pending_expenses"], "مورد نیاز پیگیری", "#9B5DE5")]
+
         for args in entries:
             StatCard(self.kpi_row, *args, self.colors).pack(side="right", fill="both", expand=True, padx=4)
+
         self._draw_gauges(stats)
         self._draw_line_chart()
         self._draw_pie_chart()

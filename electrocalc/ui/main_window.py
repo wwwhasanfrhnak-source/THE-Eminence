@@ -167,7 +167,7 @@ class MainWindow(TouchScrollable):
     def __init__(self, current_user=None):
         TouchScrollable.__init__(self)
 
-        self.current_user = current_user
+        self.current_user = dict(current_user) if current_user is not None else None
         self.scroll_mode = get_scroll_mode()
         self.scroll_speed = get_scroll_speed()
 
@@ -555,7 +555,12 @@ class MainWindow(TouchScrollable):
             return widget
 
         if self.current_user:
-            un = self.current_user.get("full_name") or self.current_user["username"]
+            # ============ تغییر ۱: پشتیبانی از dict و sqlite3.Row ============
+            try:
+                un = self.current_user.get("full_name") or self.current_user["username"]
+            except AttributeError:
+                un = self.current_user["full_name"] or self.current_user["username"]
+            # ==================================================================
             role = {"admin": "مدیر", "engineer": "مهندس", "viewer": "ناظر"}.get(self.current_user["role"], "")
             profile = tk.Frame(right, bg=p["card"], cursor="hand2")
             profile.pack(side="right", padx=(8, 0), pady=10)
@@ -879,9 +884,6 @@ class MainWindow(TouchScrollable):
             (icons["settings"], "همگام‌سازی", "electrocalc.ui.tabs.sync_tab", "SyncTab"),
         ]
 
-    # ========================================================
-    # تب‌های مدیر (Pro)
-    # ========================================================
     def _get_admin_items(self, icons):
         top = [
             (icons["dashboard"], "داشبورد", "electrocalc.ui.tabs.dashboard_tab", "DashboardTab"),
@@ -1224,7 +1226,6 @@ class MainWindow(TouchScrollable):
     def reload_ui(self):
         prev_page = self.current_page
 
-        # پاک‌سازی background jobs
         if getattr(self, "_check_job", None):
             try:
                 self.root.after_cancel(self._check_job)
@@ -1432,7 +1433,9 @@ class MainWindow(TouchScrollable):
                     messagebox.showerror("دسترسی قطع شد", "حساب کاربری شما توسط مدیر غیرفعال شد.")
                     self.root.destroy()
                     return
-                self.current_user = u
+                # ============ تغییر ۲: تبدیل به dict ============
+                self.current_user = dict(u)
+                # ==============================================
             except Exception as e:
                 log.error(f"خطا در چک فعال بودن: {e}")
 
