@@ -1,30 +1,39 @@
-"""پنجره ورود با پروفایل گرد."""
+"""Login window using the shared THE Eminence enterprise design system."""
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 from electrocalc.auth import users
-from electrocalc.config import constants as C
+from electrocalc.config import themes as themes_module
+from electrocalc.core import settings as settings_module
 from electrocalc.data.database import get_connection
+from electrocalc.ui.design_system import configure_ttk, style_toplevel, TOKENS
 from electrocalc.utils.avatar import get_avatar
 
 
 def get_active_users():
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE active = 1 ORDER BY username")
-    rows = cur.fetchall()
-    conn.close()
-    return list(rows)
+    connection = get_connection()
+    try:
+        return list(connection.execute(
+            "SELECT * FROM users WHERE active = 1 ORDER BY username"
+        ).fetchall())
+    finally:
+        connection.close()
 
 
 class LoginWindow:
     def __init__(self):
+        self.theme_name = settings_module.get_setting("app_theme", "light")
+        if self.theme_name not in themes_module.get_names():
+            self.theme_name = "light"
+        self.palette = themes_module.get_palette(self.theme_name)
         self.root = tk.Tk()
-        self.root.title("ورود به ElectroCalc")
-        self.root.geometry("460x520")
-        self.root.configure(bg=C.COLOR_BG)
-        self.root.resizable(False, False)
+        self.root.title("ورود به THE Eminence")
+        self.root.geometry("520x660")
+        self.root.minsize(480, 620)
+        self.root.resizable(True, True)
+        style_toplevel(self.root, self.palette)
+        configure_ttk(ttk.Style(self.root), self.palette)
         self.user = None
         self.user_list = []
         self.avatar_cache = {}
@@ -33,121 +42,105 @@ class LoginWindow:
 
     def _center(self):
         self.root.update_idletasks()
-        w, h = 460, 520
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        x = (sw - w) // 2
-        y = (sh - h) // 2
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        width, height = 520, 660
+        x = max(0, (self.root.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.root.winfo_screenheight() - height) // 2)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
     def _build_ui(self):
-        tk.Label(
-            self.root, text="⚡  THE Eminence",
-            font=(C.FONT_FAMILY, 24, "bold"),
-            bg=C.COLOR_BG, fg=C.COLOR_HEADER_BG,
-        ).pack(pady=(30, 3))
+        p = self.palette
+        shell = tk.Frame(self.root, bg=p["bg"], padx=28, pady=22)
+        shell.pack(fill="both", expand=True)
 
-        tk.Label(
-            self.root, text="ماشین‌حساب و مدیریت پروژه برق",
-            font=C.FONT_BODY, bg=C.COLOR_BG, fg=C.COLOR_MUTED,
-        ).pack(pady=(0, 15))
+        brand_card = tk.Frame(shell, bg=p["sidebar"], highlightbackground=p["border"],
+                              highlightthickness=1, padx=20, pady=18)
+        brand_card.pack(fill="x", pady=(0, 18))
+        tk.Label(brand_card, text="⚡  THE Eminence", bg=p["sidebar"], fg=p["accent"],
+                 font=(TOKENS["font_family"], 24, "bold")).pack(anchor="center")
+        tk.Label(brand_card, text="PROFESSIONAL ELECTRICAL MANAGEMENT",
+                 bg=p["sidebar"], fg=p["muted"], font=(TOKENS["font_family"], 8, "bold")).pack(pady=(4, 0))
 
-        # لیست کاربران با پروفایل گرد
-        tk.Label(
-            self.root, text="یک کاربر را انتخاب کنید:",
-            font=C.FONT_BODY, bg=C.COLOR_BG, fg=C.COLOR_TEXT,
-        ).pack(anchor="w", padx=50, pady=(5, 5))
+        tk.Label(shell, text="به حساب کاربری خود وارد شوید", bg=p["bg"], fg=p["text"],
+                 font=(TOKENS["font_family"], 15, "bold")).pack(anchor="e", pady=(0, 4))
+        tk.Label(shell, text="برای ادامه، کاربر و رمز عبور را وارد کنید.", bg=p["bg"], fg=p["muted"],
+                 font=(TOKENS["font_family"], 9)).pack(anchor="e", pady=(0, 10))
 
-        list_frame = tk.Frame(self.root, bg=C.COLOR_BG)
-        list_frame.pack(fill="x", padx=50)
-
-        self.users_container = tk.Frame(list_frame, bg=C.COLOR_BG)
-        self.users_container.pack(fill="x")
-
+        user_card = tk.Frame(shell, bg=p["sidebar"], highlightbackground=p["border"], highlightthickness=1)
+        user_card.pack(fill="x", pady=(0, 14))
+        tk.Label(user_card, text="انتخاب سریع کاربر", bg=p["sidebar"], fg=p["text"],
+                 font=(TOKENS["font_family"], 10, "bold"), anchor="e").pack(fill="x", padx=14, pady=(10, 4))
+        self.users_container = tk.Frame(user_card, bg=p["sidebar"])
+        self.users_container.pack(fill="x", padx=10, pady=(0, 8))
         self._load_users()
 
-        # ورودی‌ها
-        form = tk.Frame(self.root, bg=C.COLOR_BG)
-        form.pack(padx=50, pady=(20, 0), fill="x")
-
-        tk.Label(form, text="نام کاربری:", font=C.FONT_BODY,
-                 bg=C.COLOR_BG).grid(row=0, column=0, sticky="w", pady=8)
+        form = tk.Frame(shell, bg=p["sidebar"], highlightbackground=p["border"],
+                        highlightthickness=1, padx=16, pady=14)
+        form.pack(fill="x")
         self.username_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.username_var, width=22).grid(
-            row=0, column=1, pady=8, sticky="ew")
-
-        tk.Label(form, text="رمز عبور:", font=C.FONT_BODY,
-                 bg=C.COLOR_BG).grid(row=1, column=0, sticky="w", pady=8)
         self.password_var = tk.StringVar()
-        self.pass_entry = ttk.Entry(form, textvariable=self.password_var,
-                                     width=22, show="●")
-        self.pass_entry.grid(row=1, column=1, pady=8, sticky="ew")
+        tk.Label(form, text="نام کاربری", bg=p["sidebar"], fg=p["muted"],
+                 font=(TOKENS["font_family"], 9, "bold"), anchor="e").pack(fill="x")
+        ttk.Entry(form, textvariable=self.username_var).pack(fill="x", pady=(4, 12), ipady=5)
+        tk.Label(form, text="رمز عبور", bg=p["sidebar"], fg=p["muted"],
+                 font=(TOKENS["font_family"], 9, "bold"), anchor="e").pack(fill="x")
+        self.pass_entry = ttk.Entry(form, textvariable=self.password_var, show="●")
+        self.pass_entry.pack(fill="x", pady=(4, 4), ipady=5)
 
-        form.columnconfigure(1, weight=1)
-
-        ttk.Button(self.root, text="ورود", command=self._login).pack(
-            pady=20, ipadx=40, ipady=6)
-
-        self.root.bind("<Return>", lambda e: self._login())
+        self.login_button = ttk.Button(shell, text="ورود امن  →", style="Accent.TButton", command=self._login)
+        self.login_button.pack(fill="x", pady=(15, 8), ipady=5)
+        tk.Label(shell, text="THE Eminence  •  محیط امن مدیریت پروژه‌های برق",
+                 bg=p["bg"], fg=p["muted"], font=(TOKENS["font_family"], 8)).pack(side="bottom", pady=(10, 0))
+        self.root.bind("<Return>", lambda event: self._login())
         self.root.protocol("WM_DELETE_WINDOW", self._cancel)
-
         if self.user_list:
             self._pick_user(0)
 
     def _load_users(self):
-        """کاربران رو با پروفایل گرد نشون بده."""
         self.user_list = get_active_users()
         self.avatar_cache.clear()
-
         if not self.user_list:
-            tk.Label(self.users_container, text="هیچ کاربری وجود ندارد",
-                     font=C.FONT_SMALL, bg=C.COLOR_BG,
-                     fg=C.COLOR_DANGER).pack()
+            tk.Label(self.users_container, text="هیچ کاربر فعالی وجود ندارد",
+                     font=(TOKENS["font_family"], 9), bg=self.palette["sidebar"],
+                     fg=self.palette["danger"], pady=10).pack(fill="x")
             return
-
-        for i, u in enumerate(self.user_list):
-            avatar = get_avatar(u, 40)
-            self.avatar_cache[f"av_{i}"] = avatar
-
-            row = tk.Frame(self.users_container, bg=C.COLOR_BG,
-                           cursor="hand2")
+        for index, user in enumerate(self.user_list):
+            self.avatar_cache[f"av_{index}"] = get_avatar(user, 34)
+            row = tk.Frame(self.users_container, bg=self.palette["sidebar"], cursor="hand2",
+                           highlightbackground=self.palette["border"], highlightthickness=1)
             row.pack(fill="x", pady=3)
-
+            avatar = self.avatar_cache[f"av_{index}"]
             if avatar:
-                lbl_img = tk.Label(row, image=avatar, bg=C.COLOR_BG)
-                lbl_img.image = avatar
-                lbl_img.pack(side="right", padx=(0, 10))
-
-            name = u["full_name"] or u["username"]
-            lbl = tk.Label(row, text=name, font=C.FONT_BODY,
-                           bg=C.COLOR_BG, fg=C.COLOR_TEXT,
-                           anchor="e", padx=10)
-            lbl.pack(side="right", fill="x", expand=True)
-
-            for w in (row, lbl):
-                w.bind("<Button-1>", lambda e, idx=i: self._pick_user(idx))
+                image_label = tk.Label(row, image=avatar, bg=self.palette["sidebar"])
+                image_label.image = avatar
+                image_label.pack(side="right", padx=8, pady=5)
+            display_name = user["full_name"] or user["username"]
+            name_label = tk.Label(row, text=display_name, font=(TOKENS["font_family"], 9, "bold"),
+                                  bg=self.palette["sidebar"], fg=self.palette["text"], anchor="e", padx=10, pady=9)
+            name_label.pack(side="right", fill="x", expand=True)
+            for widget in (row, name_label):
+                widget.bind("<Button-1>", lambda event, idx=index: self._pick_user(idx))
+                widget.bind("<Enter>", lambda event, target=row: target.configure(bg=self.palette["bg"]))
+                widget.bind("<Leave>", lambda event, target=row: target.configure(bg=self.palette["sidebar"]))
 
     def _pick_user(self, idx):
-        if idx < 0 or idx >= len(self.user_list):
-            return
-        u = self.user_list[idx]
-        self.username_var.set(u["username"])
-        self.password_var.set("")
-        self.pass_entry.focus_set()
+        if 0 <= idx < len(self.user_list):
+            self.username_var.set(self.user_list[idx]["username"])
+            self.password_var.set("")
+            self.pass_entry.focus_set()
 
     def _login(self):
         username = self.username_var.get().strip()
         password = self.password_var.get()
         if not username or not password:
-            messagebox.showwarning("هشدار", "نام کاربری و رمز را وارد کنید.")
+            messagebox.showwarning("ورود", "نام کاربری و رمز عبور را وارد کنید.", parent=self.root)
             return
-        user = users.login(username, password)
-        if user is None:
-            messagebox.showerror("خطا", "نام کاربری یا رمز اشتباه است.")
+        authenticated_user = users.login(username, password)
+        if authenticated_user is None:
+            messagebox.showerror("ورود ناموفق", "نام کاربری یا رمز عبور نادرست است.", parent=self.root)
             self.password_var.set("")
             self.pass_entry.focus_set()
             return
-        self.user = user
+        self.user = authenticated_user
         self.root.destroy()
 
     def _cancel(self):
