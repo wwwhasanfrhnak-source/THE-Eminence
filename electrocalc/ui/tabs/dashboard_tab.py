@@ -1,95 +1,193 @@
-"""تب داشبورد — آمار زنده، نمودارها و خروجی PDF/Excel."""
+"""Modern, theme-aware Tk dashboard with operational and financial summaries."""
 
 import os
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox
 from pathlib import Path
-from datetime import datetime
+from tkinter import messagebox
 
+from electrocalc.config import themes as themes_module
 from electrocalc.core import dashboard as db_stats
 from electrocalc.core.income_trends import get_financial_dashboard
-from electrocalc.config import themes as themes_module
+from electrocalc.ui.design_system import TOKENS
 from electrocalc.ui.scrollable_frame import ScrollableFrame
 
 
-CHART_COLORS = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b",
-                "#ef4444", "#ec4899", "#8b5cf6", "#14b8a6"]
+CHART_COLORS = ["#3867E8", "#16A6C7", "#168A65", "#E59A26",
+                "#D84C5B", "#9B5DE5", "#14A8A0", "#E45D9A"]
+REVENUE_COLORS = {"invoiced": "#3867E8", "received": "#168A65"}
 
 
 def _get_colors():
     try:
-        from electrocalc.core import settings as st
-        theme = st.get_setting("app_theme", "light")
+        from electrocalc.core import settings as settings_module
+        theme_name = settings_module.get_setting("app_theme", "light")
     except Exception:
-        theme = "light"
-    p = themes_module.get_palette(theme)
-    return {key: p[key] for key in
+        theme_name = "light"
+    palette = themes_module.get_palette(theme_name)
+    return {key: palette[key] for key in
             ("bg", "card", "border", "text", "muted", "accent", "danger", "success")}
 
 
-class DarkCard(tk.Frame):
-    def __init__(self, parent, title="", icon="", pad=14, colors=None, **kw):
-        self.colors = colors or _get_colors()
-        super().__init__(parent, bg=self.colors["card"],
-                         highlightbackground=self.colors["border"],
-                         highlightthickness=1, **kw)
-        if title:
-            head = tk.Frame(self, bg=self.colors["card"])
-            head.pack(fill="x", padx=pad, pady=(pad, 8))
-            tk.Label(head, text=f"{icon}  {title}", font=("Segoe UI", 12, "bold"),
-                     bg=self.colors["card"], fg=self.colors["text"], anchor="e").pack(side="right")
-        self.body = tk.Frame(self, bg=self.colors["card"])
-        self.body.pack(fill="both", expand=True, padx=pad, pady=(0, pad))
+class Surface(tk.Frame):
+    """A reusable bordered surface; native Tk keeps it dependency-free."""
+    def __init__(self, parent, palette, padding=16, **kwargs):
+        super().__init__(parent, bg=palette["card"], highlightbackground=palette["border"],
+                         highlightthickness=1, **kwargs)
+        self.palette = palette
+        self.body = tk.Frame(self, bg=palette["card"])
+        self.body.pack(fill="both", expand=True, padx=padding, pady=padding)
 
 
-class KpiCard(tk.Frame):
-    def __init__(self, parent, icon, title, value, color, subtitle="", colors=None):
-        self.colors = colors or _get_colors()
-        super().__init__(parent, bg=self.colors["card"],
-                         highlightbackground=self.colors["border"], highlightthickness=1)
+class SectionCard(Surface):
+    def __init__(self, parent, title, icon, palette, height=None):
+        super().__init__(parent, palette, padding=14)
+        if height:
+            self.configure(height=height)
+            self.pack_propagate(False)
+        header = tk.Frame(self.body, bg=palette["card"])
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(header, text=title, bg=palette["card"], fg=palette["text"],
+                 font=(TOKENS["font_family"], TOKENS["font_section"], "bold"),
+                 anchor="e").pack(side="right")
+        tk.Label(header, text=icon, bg=palette["card"], fg=palette["accent"],
+                 font=("Segoe UI Emoji", 15)).pack(side="right", padx=(0, 7))
+        self.content = tk.Frame(self.body, bg=palette["card"])
+        self.content.pack(fill="both", expand=True)
+
+
+class StatCard(Surface):
+    def __init__(self, parent, icon, title, value, note, accent, palette):
+        super().__init__(parent, palette, padding=13)
+        self.configure(height=108)
         self.pack_propagate(False)
-        self.configure(height=105)
-        tk.Frame(self, bg=color, width=5).pack(side="right", fill="y")
-        body = tk.Frame(self, bg=self.colors["card"])
-        body.pack(side="right", fill="both", expand=True, padx=14, pady=12)
-        tk.Label(body, text=icon, font=("Segoe UI Emoji", 22), bg=self.colors["card"],
-                 fg=color).pack(side="right", padx=(0, 10))
-        text_frame = tk.Frame(body, bg=self.colors["card"])
-        text_frame.pack(side="right", fill="both", expand=True)
-        tk.Label(text_frame, text=title, font=("Segoe UI", 9), bg=self.colors["card"],
-                 fg=self.colors["muted"], anchor="e").pack(anchor="e")
-        tk.Label(text_frame, text=str(value), font=("Segoe UI", 16, "bold"),
-                 bg=self.colors["card"], fg=self.colors["text"], anchor="e").pack(anchor="e")
-        if subtitle:
-            tk.Label(text_frame, text=subtitle, font=("Segoe UI", 8), bg=self.colors["card"],
-                     fg=color, anchor="e").pack(anchor="e")
+        stripe = tk.Frame(self, bg=accent, height=3)
+        stripe.pack(fill="x", side="top")
+        body = tk.Frame(self, bg=palette["card"])
+        body.pack(fill="both", expand=True, padx=13, pady=10)
+        title_row = tk.Frame(body, bg=palette["card"])
+        title_row.pack(fill="x")
+        tk.Label(title_row, text=title, bg=palette["card"], fg=palette["muted"],
+                 font=(TOKENS["font_family"], 9, "bold"), anchor="e").pack(side="right")
+        tk.Label(title_row, text=icon, bg=palette["card"], fg=accent,
+                 font=("Segoe UI Emoji", 14)).pack(side="right", padx=(0, 6))
+        tk.Label(body, text=str(value), bg=palette["card"], fg=palette["text"],
+                 font=(TOKENS["font_family"], 17, "bold"), anchor="e").pack(anchor="e", pady=(7, 0))
+        tk.Label(body, text=note, bg=palette["card"], fg=accent,
+                 font=(TOKENS["font_family"], 8), anchor="e").pack(anchor="e")
 
 
-class RevenueCard(DarkCard):
-    """KPI card showing invoiced and cash-received totals separately."""
-    def __init__(self, parent, title, icon, color, colors):
-        super().__init__(parent, title, icon, pad=12, colors=colors)
-        self.billed_value = tk.Label(self.body, text="—", bg=colors["card"], fg=colors["text"],
-                                     font=("Segoe UI", 18, "bold"), anchor="e")
-        self.billed_value.pack(fill="x", anchor="e")
-        tk.Label(self.body, text="فاکتورشده", bg=colors["card"], fg=colors["muted"],
-                 font=("Segoe UI", 8), anchor="e").pack(fill="x", anchor="e")
-        self.received_value = tk.Label(self.body, text="وصول‌شده: —", bg=colors["card"],
-                                       fg=color, font=("Segoe UI", 9, "bold"), anchor="e")
-        self.received_value.pack(fill="x", anchor="e", pady=(4, 0))
+class RevenueCard(Surface):
+    def __init__(self, parent, title, icon, accent, palette):
+        super().__init__(parent, palette, padding=12)
+        self.configure(height=112)
+        self.pack_propagate(False)
+        header = tk.Frame(self.body, bg=palette["card"])
+        header.pack(fill="x")
+        tk.Label(header, text=title, bg=palette["card"], fg=palette["muted"],
+                 font=(TOKENS["font_family"], 9, "bold"), anchor="e").pack(side="right")
+        tk.Label(header, text=icon, bg=palette["card"], fg=accent,
+                 font=("Segoe UI Emoji", 14)).pack(side="right", padx=(0, 5))
+        self.invoiced = tk.Label(self.body, text="—", bg=palette["card"], fg=palette["text"],
+                                 font=(TOKENS["font_family"], 15, "bold"), anchor="e")
+        self.invoiced.pack(fill="x", anchor="e", pady=(7, 0))
+        self.received = tk.Label(self.body, text="وصول‌شده: —", bg=palette["card"], fg=accent,
+                                 font=(TOKENS["font_family"], 8, "bold"), anchor="e")
+        self.received.pack(fill="x", anchor="e")
 
-    def set_values(self, billed, received):
-        self.billed_value.config(text=f"{billed:,.0f} تومان")
-        self.received_value.config(text=f"وصول‌شده: {received:,.0f} تومان")
+    def set_values(self, invoiced, received):
+        self.invoiced.configure(text=f"{invoiced:,.0f} تومان")
+        self.received.configure(text=f"وصول‌شده: {received:,.0f} تومان")
+
+
+class RevenueChart(tk.Canvas):
+    """Responsive native canvas chart with billed/received series and legend."""
+    def __init__(self, parent, palette, chart_type="line", **kwargs):
+        super().__init__(parent, height=220, bg=palette["card"], highlightthickness=0,
+                         borderwidth=0, **kwargs)
+        self.palette = palette
+        self.chart_type = chart_type
+        self.series = {"labels": [], "invoiced": [], "received": []}
+        self.bind("<Configure>", self._redraw)
+
+    def set_series(self, series):
+        self.series = series or {"labels": [], "invoiced": [], "received": []}
+        self._redraw()
+
+    def _redraw(self, event=None):
+        self.delete("all")
+        width, height = max(self.winfo_width(), 240), max(self.winfo_height(), 170)
+        p = self.palette
+        labels = self.series.get("labels", [])
+        invoiced = self.series.get("invoiced", [])
+        received = self.series.get("received", [])
+        if not labels:
+            self.create_text(width/2, height/2, text="داده‌ای برای نمایش نیست",
+                             fill=p["muted"], font=(TOKENS["font_family"], 10))
+            return
+
+        legend_y = 8
+        self.create_oval(width-108, legend_y, width-98, legend_y+10,
+                         fill=REVENUE_COLORS["invoiced"], outline="")
+        self.create_text(width-92, legend_y+5, text="فاکتورشده", anchor="w",
+                         fill=p["muted"], font=(TOKENS["font_family"], 8))
+        self.create_oval(width-205, legend_y, width-195, legend_y+10,
+                         fill=REVENUE_COLORS["received"], outline="")
+        self.create_text(width-189, legend_y+5, text="وصول‌شده", anchor="w",
+                         fill=p["muted"], font=(TOKENS["font_family"], 8))
+
+        left, right, top, bottom = 42, 12, 27, 31
+        graph_w, graph_h = max(1, width-left-right), max(1, height-top-bottom)
+        max_value = max([0.0] + invoiced + received) or 1.0
+        for index in range(4):
+            y = top + graph_h*index/3
+            self.create_line(left, y, width-right, y, fill=p["border"], dash=(2, 4))
+
+        if self.chart_type == "bar":
+            slot = graph_w/max(1, len(labels))
+            bar_width = min(18, slot*.30)
+            for i, (bill, cash) in enumerate(zip(invoiced, received)):
+                center = left+slot*(i+.5)
+                for offset, value, color in ((-bar_width/2, bill, REVENUE_COLORS["invoiced"]),
+                                             (bar_width/2, cash, REVENUE_COLORS["received"])):
+                    bar_height = value/max_value*graph_h
+                    self.create_rectangle(center+offset-bar_width/2, top+graph_h-bar_height,
+                                          center+offset+bar_width/2, top+graph_h,
+                                          fill=color, outline="")
+                self._label(i, center, height-bottom+13, labels, len(labels))
+            return
+
+        self._draw_line(invoiced, labels, left, top, graph_w, graph_h, max_value,
+                        REVENUE_COLORS["invoiced"])
+        self._draw_line(received, labels, left, top, graph_w, graph_h, max_value,
+                        REVENUE_COLORS["received"])
+        count = len(labels)
+        step = max(1, count//6)
+        for index in range(0, count, step):
+            x = left+graph_w*index/max(1, count-1)
+            self._label(index, x, height-bottom+13, labels, count)
+
+    def _draw_line(self, values, labels, left, top, graph_w, graph_h, maximum, color):
+        points = [(left+graph_w*i/max(1, len(labels)-1),
+                   top+graph_h-value/maximum*graph_h) for i, value in enumerate(values)]
+        if len(points) > 1:
+            self.create_line([coord for point in points for coord in point],
+                             fill=color, width=2, smooth=True, splinesteps=12)
+        for x, y in points:
+            self.create_oval(x-2.5, y-2.5, x+2.5, y+2.5, fill=color, outline=color)
+
+    def _label(self, index, x, y, labels, count):
+        if index < count:
+            self.create_text(x, y, text=str(labels[index]), fill=self.palette["muted"],
+                             font=(TOKENS["font_family"], 7))
 
 
 class DashboardTab(ScrollableFrame):
     REFRESH_MS = 5000
 
     def __init__(self, parent, app):
-        super().__init__(parent, padding=20)
+        super().__init__(parent, padding=TOKENS["space_lg"], bg=_get_colors()["bg"])
         self.app = app
         self.colors = _get_colors()
         self._income_refresh_job = None
@@ -105,101 +203,102 @@ class DashboardTab(ScrollableFrame):
     def build_ui(self):
         p, c = self.inner, self.colors
         header = tk.Frame(p, bg=c["bg"])
-        header.pack(fill="x", pady=(0, 15))
-        title_frame = tk.Frame(header, bg=c["bg"])
-        title_frame.pack(side="right")
-        tk.Label(title_frame, text="📊  داشبورد مدیریتی", font=("Segoe UI", 20, "bold"),
-                 bg=c["bg"], fg=c["text"], anchor="e").pack(anchor="e")
-        tk.Label(title_frame, text="نگاه کلی به وضعیت کارگاه و پروژه‌ها",
-                 font=("Segoe UI", 10), bg=c["bg"], fg=c["muted"], anchor="e").pack(anchor="e")
-        buttons = tk.Frame(header, bg=c["bg"])
-        buttons.pack(side="left", pady=8)
-        for text, command, color in [("🔄 بروزرسانی", self.refresh, c["accent"]),
-                                     ("📊 Excel", self.export_excel, "#16a34a"),
-                                     ("📄 PDF حرفه‌ای", self.export_pdf_pro, c["danger"])]:
-            button = tk.Label(buttons, text=text, font=("Segoe UI", 10, "bold"),
-                              bg=color, fg="white", padx=14, pady=8, cursor="hand2")
-            button.pack(side="right", padx=3)
-            button.bind("<Button-1>", lambda event, cmd=command: cmd())
+        header.pack(fill="x", pady=(0, TOKENS["space_lg"]))
+        title_block = tk.Frame(header, bg=c["bg"])
+        title_block.pack(side="right")
+        tk.Label(title_block, text="داشبورد مدیریتی", bg=c["bg"], fg=c["text"],
+                 font=(TOKENS["font_family"], TOKENS["font_title"], "bold"), anchor="e").pack(anchor="e")
+        tk.Label(title_block, text="نمای کلی از عملکرد پروژه‌ها و امور مالی", bg=c["bg"],
+                 fg=c["muted"], font=(TOKENS["font_family"], TOKENS["font_body"])).pack(anchor="e", pady=(3, 0))
+        actions = tk.Frame(header, bg=c["bg"])
+        actions.pack(side="left", pady=5)
+        self._action_button(actions, "بروزرسانی", self.refresh, c["accent"])
+        self._action_button(actions, "Excel", self.export_excel, c["success"])
+        self._action_button(actions, "PDF", self.export_pdf_pro, c["danger"])
 
         self.kpi_row = tk.Frame(p, bg=c["bg"])
-        self.kpi_row.pack(fill="x", pady=(0, 14))
-
+        self.kpi_row.pack(fill="x", pady=(0, TOKENS["space_md"]))
         revenue_row = tk.Frame(p, bg=c["bg"])
-        revenue_row.pack(fill="x", pady=(0, 14))
+        revenue_row.pack(fill="x", pady=(0, TOKENS["space_md"]))
         self.revenue_cards = {}
-        for key, title, icon, color in [
-            ("all", "کل درآمد", "💰", "#7c3aed"),
-            ("today", "درآمد امروز", "☀️", "#06b6d4"),
-            ("week", "درآمد این هفته", "📈", "#10b981"),
-            ("month", "درآمد این ماه", "🗓", "#f59e0b"),
-        ]:
-            card = RevenueCard(revenue_row, title, icon, color, c)
+        for key, title, icon, accent in (
+                ("all", "کل درآمد", "💰", c["accent"]),
+                ("today", "امروز", "☀️", "#168A65"),
+                ("week", "این هفته", "📈", "#168A65"),
+                ("month", "این ماه", "🗓", "#E59A26")):
+            card = RevenueCard(revenue_row, title, icon, accent, c)
             card.pack(side="right", fill="both", expand=True, padx=4)
             self.revenue_cards[key] = card
 
-        middle = tk.Frame(p, bg=c["bg"])
-        middle.pack(fill="x", pady=(0, 14))
-        self.gauges_card = DarkCard(middle, "درصد پیشرفت کلی", "🎯", colors=c)
-        self.gauges_card.pack(side="right", fill="both", expand=True, padx=(0, 7))
-        self.gauges_canvas = tk.Canvas(self.gauges_card.body, height=210, bg=c["card"], highlightthickness=0)
+        work_row = tk.Frame(p, bg=c["bg"])
+        work_row.pack(fill="x", pady=(0, TOKENS["space_md"]))
+        self.gauges_card = SectionCard(work_row, "شاخص‌های عملیاتی", "🎯", c, height=265)
+        self.gauges_card.pack(side="right", fill="both", expand=True, padx=(0, 6))
+        self.gauges_canvas = tk.Canvas(self.gauges_card.content, height=210, bg=c["card"], highlightthickness=0)
         self.gauges_canvas.pack(fill="both", expand=True)
-        self.line_card = DarkCard(middle, "روند کاری هفتگی", "📈", colors=c)
-        self.line_card.pack(side="right", fill="both", expand=True, padx=7)
-        self.line_canvas = tk.Canvas(self.line_card.body, height=210, bg=c["card"], highlightthickness=0)
+        self.line_card = SectionCard(work_row, "ساعات کار هفتگی", "⏱", c, height=265)
+        self.line_card.pack(side="right", fill="both", expand=True, padx=6)
+        self.line_canvas = tk.Canvas(self.line_card.content, height=210, bg=c["card"], highlightthickness=0)
         self.line_canvas.pack(fill="both", expand=True)
-        self.pie_card = DarkCard(middle, "وضعیت پروژه‌ها", "🥧", colors=c)
-        self.pie_card.pack(side="right", fill="both", expand=True, padx=(7, 0))
-        self.pie_canvas = tk.Canvas(self.pie_card.body, height=210, bg=c["card"], highlightthickness=0)
+        self.pie_card = SectionCard(work_row, "وضعیت پروژه‌ها", "◒", c, height=265)
+        self.pie_card.pack(side="right", fill="both", expand=True, padx=(6, 0))
+        self.pie_canvas = tk.Canvas(self.pie_card.content, height=210, bg=c["card"], highlightthickness=0)
         self.pie_canvas.pack(fill="both", expand=True)
 
         self.income_charts = {}
-        chart_specs = [("daily", "درآمد روزانه — ۳۰ روز اخیر", "خطی"),
-                       ("weekly", "درآمد هفتگی — ۱۲ هفته اخیر", "خطی"),
-                       ("monthly", "درآمد ماهانه — ۱۲ ماه اخیر", "خطی"),
-                       ("yearly", "مقایسه درآمد سالانه", "میله‌ای")]
-        for row_specs in (chart_specs[:2], chart_specs[2:]):
+        specs = [("daily", "روند درآمد روزانه · ۳۰ روز", "line"),
+                 ("weekly", "روند درآمد هفتگی · ۱۲ هفته", "line"),
+                 ("monthly", "روند درآمد ماهانه · ۱۲ ماه", "line"),
+                 ("yearly", "مقایسه درآمد سالانه", "bar")]
+        for row_spec in (specs[:2], specs[2:]):
             row = tk.Frame(p, bg=c["bg"])
-            row.pack(fill="x", pady=(0, 14))
-            for key, title, chart_type in row_specs:
-                card = DarkCard(row, title, "💹", colors=c)
+            row.pack(fill="x", pady=(0, TOKENS["space_md"]))
+            for index, (key, title, kind) in enumerate(row_spec):
+                card = SectionCard(row, title, "↗", c, height=285)
                 card.pack(side="right", fill="both", expand=True,
-                          padx=(0, 7) if key in ("daily", "monthly") else (7, 0))
-                canvas = tk.Canvas(card.body, height=225, bg=c["card"], highlightthickness=0)
-                canvas.pack(fill="both", expand=True)
-                self.income_charts[key] = (canvas, chart_type)
+                          padx=(0, 6) if index == 0 else (6, 0))
+                chart = RevenueChart(card.content, c, chart_type=kind)
+                chart.pack(fill="both", expand=True)
+                self.income_charts[key] = chart
 
-        bottom = tk.Frame(p, bg=c["bg"])
-        bottom.pack(fill="x", pady=(0, 20))
-        self.hbars_card = DarkCard(bottom, "ساعات کار مهندسان", "👷", colors=c)
-        self.hbars_card.pack(side="right", fill="both", expand=True, padx=(0, 7))
-        self.hbars_canvas = tk.Canvas(self.hbars_card.body, height=260, bg=c["card"], highlightthickness=0)
+        lower = tk.Frame(p, bg=c["bg"])
+        lower.pack(fill="x", pady=(0, TOKENS["space_lg"]))
+        self.hbars_card = SectionCard(lower, "ساعات کار تیم", "👷", c, height=285)
+        self.hbars_card.pack(side="right", fill="both", expand=True, padx=(0, 6))
+        self.hbars_canvas = tk.Canvas(self.hbars_card.content, height=235, bg=c["card"], highlightthickness=0)
         self.hbars_canvas.pack(fill="both", expand=True)
-        self.vbars_card = DarkCard(bottom, "هزینه پروژه‌ها", "💰", colors=c)
-        self.vbars_card.pack(side="right", fill="both", expand=True, padx=(7, 0))
-        self.vbars_canvas = tk.Canvas(self.vbars_card.body, height=260, bg=c["card"], highlightthickness=0)
+        self.vbars_card = SectionCard(lower, "هزینه به تفکیک پروژه", "◈", c, height=285)
+        self.vbars_card.pack(side="right", fill="both", expand=True, padx=(6, 0))
+        self.vbars_canvas = tk.Canvas(self.vbars_card.content, height=235, bg=c["card"], highlightthickness=0)
         self.vbars_canvas.pack(fill="both", expand=True)
+
+    def _action_button(self, parent, text, command, color):
+        button = tk.Label(parent, text=text, bg=color, fg="#FFFFFF", cursor="hand2",
+                          padx=13, pady=8, font=(TOKENS["font_family"], 9, "bold"))
+        button.pack(side="right", padx=4)
+        button.bind("<Button-1>", lambda event: command())
+        button.bind("<Enter>", lambda event: button.configure(relief="raised"))
+        button.bind("<Leave>", lambda event: button.configure(relief="flat"))
 
     def refresh(self):
         try:
             stats = db_stats.get_summary()
-            self._render_existing_dashboard(stats)
+            self._render_operational_stats(stats)
         except Exception as exc:
-            print(f"خطا در بروزرسانی داشبورد: {exc}")
+            print(f"Dashboard refresh error: {exc}")
         self._start_income_refresh()
 
-    def _render_existing_dashboard(self, stats):
-        c = self.colors
+    def _render_operational_stats(self, stats):
         for widget in self.kpi_row.winfo_children():
             widget.destroy()
-        kpis = [("📁", "پروژه‌ها", stats["projects"], "#7c3aed", "پروژه فعال"),
-                ("👥", "کاربران", stats["users"], "#06b6d4", "کاربر فعال"),
-                ("⏰", "ساعت کار", f"{stats['total_hours']:,.0f}", "#10b981", "ساعت کل"),
-                ("💰", "هزینه‌ها", f"{stats['total_expenses']:,.0f}", "#ef4444", "تومان"),
-                ("🏭", "ارزش انبار", f"{stats['total_materials']:,.0f}", "#f59e0b", "تومان"),
-                ("⏳", "در انتظار", stats["pending_reports"] + stats["pending_expenses"], "#ec4899", "نیاز تأیید")]
-        for args in kpis:
-            KpiCard(self.kpi_row, *args, colors=c).pack(side="right", fill="both", expand=True, padx=4)
+        entries = [("📁", "پروژه‌ها", stats["projects"], "#3867E8", "پروژه ثبت‌شده"),
+                   ("👥", "کاربران", stats["users"], "#168CCB", "کاربر فعال"),
+                   ("⏰", "ساعت کار", f"{stats['total_hours']:,.0f}", "#168A65", "ساعت ثبت‌شده"),
+                   ("💳", "هزینه‌ها", f"{stats['total_expenses']:,.0f}", "#D84C5B", "تومان"),
+                   ("📦", "ارزش مصالح", f"{stats['total_materials']:,.0f}", "#E59A26", "تومان"),
+                   ("⌛", "در انتظار", stats["pending_reports"]+stats["pending_expenses"], "#9B5DE5", "مورد نیاز پیگیری")]
+        for args in entries:
+            StatCard(self.kpi_row, *args, self.colors).pack(side="right", fill="both", expand=True, padx=4)
         self._draw_gauges(stats)
         self._draw_line_chart()
         self._draw_pie_chart()
@@ -244,134 +343,75 @@ class DashboardTab(ScrollableFrame):
             return
         self._income_thread = None
         if not success:
-            print(f"خطا در خواندن اطلاعات درآمد: {result}")
-            for canvas, _ in self.income_charts.values():
-                self._empty(canvas, canvas.winfo_width() or 400,
-                            canvas.winfo_height() or 220, "خواندن اطلاعات درآمد ممکن نشد")
+            print(f"Income chart refresh failed: {result}")
+            for chart in self.income_charts.values():
+                chart.set_series({"labels": [], "invoiced": [], "received": []})
             return
-        self._render_income_dashboard(result)
-
-    def _render_income_dashboard(self, data):
         for key, card in self.revenue_cards.items():
-            values = data["summary"][key]
-            card.set_values(values["invoiced"], values["received"])
-        for key, (canvas, chart_type) in self.income_charts.items():
-            self._draw_revenue_chart(canvas, data[key], chart_type)
-
-    def _draw_revenue_chart(self, canvas, series, chart_type):
-        canvas.delete("all")
-        canvas.update_idletasks()
-        width = canvas.winfo_width() or 420
-        height = canvas.winfo_height() or 225
-        labels = series["labels"]
-        billed, received = series["invoiced"], series["received"]
-        colors = self.colors
-        if not labels:
-            self._empty(canvas, width, height, "داده‌ای برای نمایش نیست")
-            return
-        left, right, top, bottom = 48, 16, 20, 38
-        chart_w, chart_h = max(1, width-left-right), max(1, height-top-bottom)
-        max_value = max([0.0] + billed + received) or 1.0
-        for i in range(4):
-            y = top + chart_h * i / 3
-            canvas.create_line(left, y, width-right, y, fill=colors["border"], dash=(2, 4))
-        if chart_type == "میله‌ای":
-            slot = chart_w / max(1, len(labels))
-            bar_w = slot * .32
-            for i, (bill, paid) in enumerate(zip(billed, received)):
-                center = left + slot*(i+.5)
-                for offset, value, color in [(-bar_w/2, bill, "#7c3aed"),
-                                              (bar_w/2, paid, "#10b981")]:
-                    bar_h = value/max_value*chart_h
-                    canvas.create_rectangle(center+offset-bar_w/2, top+chart_h-bar_h,
-                                            center+offset+bar_w/2, top+chart_h,
-                                            fill=color, outline="")
-                canvas.create_text(center, height-14, text=labels[i],
-                                   fill=colors["muted"], font=("Segoe UI", 8))
-        else:
-            count = len(labels)
-            for values, color in [(billed, "#7c3aed"), (received, "#10b981")]:
-                points = []
-                for i, value in enumerate(values):
-                    x = left + chart_w*i/max(1, count-1)
-                    y = top + chart_h - value/max_value*chart_h
-                    points.append((x, y))
-                if len(points) > 1:
-                    canvas.create_line([coord for point in points for coord in point],
-                                       fill=color, width=2, smooth=True)
-                for x, y in points:
-                    canvas.create_oval(x-2, y-2, x+2, y+2, fill=color, outline=color)
-            label_step = max(1, count // 6)
-            for i in range(0, count, label_step):
-                x = left + chart_w*i/max(1, count-1)
-                canvas.create_text(x, height-14, text=labels[i], fill=colors["muted"],
-                                   font=("Segoe UI", 8))
-        canvas.create_rectangle(left, 5, left+10, 13, fill="#7c3aed", outline="")
-        canvas.create_text(left+15, 9, text="فاکتورشده", anchor="w",
-                           fill=colors["muted"], font=("Segoe UI", 8))
-        canvas.create_rectangle(left+100, 5, left+110, 13, fill="#10b981", outline="")
-        canvas.create_text(left+115, 9, text="وصول‌شده", anchor="w",
-                           fill=colors["muted"], font=("Segoe UI", 8))
+            summary = result["summary"][key]
+            card.set_values(summary["invoiced"], summary["received"])
+        for key, chart in self.income_charts.items():
+            chart.set_series(result[key])
 
     def _on_destroy(self, event):
         if event.widget is not self:
             return
         self._destroyed = True
-        for job_name in ("_income_refresh_job", "_income_poll_job"):
-            job = getattr(self, job_name, None)
+        for attr in ("_income_refresh_job", "_income_poll_job"):
+            job = getattr(self, attr, None)
             if job:
                 try:
                     self.after_cancel(job)
                 except tk.TclError:
                     pass
-                setattr(self, job_name, None)
+                setattr(self, attr, None)
 
     def _draw_gauges(self, stats):
-        c = self.gauges_canvas
-        c.delete("all")
-        c.update_idletasks()
-        h = 210
-        self._gauge_at(c, 75, h/2, 55, 72, "#06b6d4", "پروژه‌ها", f"{stats['projects']} عدد")
-        self._gauge_at(c, 200, h/2, 55, 58, "#10b981", "کاربران", f"{stats['users']} نفر")
+        canvas = self.gauges_canvas
+        canvas.delete("all")
+        canvas.update_idletasks()
+        height = 210
+        self._gauge_at(canvas, 75, height/2, 55, 72, "#168CCB", "پروژه‌ها", f"{stats['projects']} عدد")
+        self._gauge_at(canvas, 200, height/2, 55, 58, "#168A65", "کاربران", f"{stats['users']} نفر")
         hours = stats["total_hours"]
-        self._gauge_at(c, 325, h/2, 55, min(hours, 100) if hours else 0,
-                       "#f59e0b", "ساعات", f"{hours:,.0f}")
+        self._gauge_at(canvas, 325, height/2, 55, min(hours, 100) if hours else 0,
+                       "#E59A26", "ساعات", f"{hours:,.0f}")
 
-    def _gauge_at(self, c, cx, cy, radius, percent, color, label, value_text):
-        cl = self.colors
-        c.create_arc(cx-radius, cy-radius, cx+radius, cy+radius, start=90, extent=-359,
-                     outline=cl["border"], width=10, style="arc")
+    def _gauge_at(self, canvas, cx, cy, radius, percent, color, label, value_text):
+        p = self.colors
+        canvas.create_arc(cx-radius, cy-radius, cx+radius, cy+radius, start=90, extent=-359,
+                          outline=p["border"], width=10, style="arc")
         if percent > 0:
-            c.create_arc(cx-radius, cy-radius, cx+radius, cy+radius, start=90,
-                         extent=-(percent/100)*360, outline=color, width=10, style="arc")
-        c.create_text(cx, cy-4, text=f"{percent:.0f}%", fill=cl["text"], font=("Segoe UI", 13, "bold"))
-        c.create_text(cx, cy+12, text=value_text, fill=cl["muted"], font=("Segoe UI", 8))
-        c.create_text(cx, cy+radius+14, text=label, fill=cl["text"], font=("Segoe UI", 9, "bold"))
+            canvas.create_arc(cx-radius, cy-radius, cx+radius, cy+radius, start=90,
+                              extent=-(percent/100)*360, outline=color, width=10, style="arc")
+        canvas.create_text(cx, cy-4, text=f"{percent:.0f}%", fill=p["text"], font=(TOKENS["font_family"], 13, "bold"))
+        canvas.create_text(cx, cy+12, text=value_text, fill=p["muted"], font=(TOKENS["font_family"], 8))
+        canvas.create_text(cx, cy+radius+14, text=label, fill=p["text"], font=(TOKENS["font_family"], 9, "bold"))
 
     def _draw_line_chart(self):
-        c = self.line_canvas
-        c.delete("all")
-        c.update_idletasks()
-        width, height, cl = c.winfo_width() or 400, c.winfo_height() or 210, self.colors
+        canvas = self.line_canvas
+        canvas.delete("all")
+        canvas.update_idletasks()
+        width, height = canvas.winfo_width() or 400, canvas.winfo_height() or 210
+        p = self.colors
         values = self._get_weekly_hours()
         if not values or all(value == 0 for value in values):
-            self._empty(c, width, height, "هنوز داده‌ای برای نمایش")
+            self._empty(canvas, width, height, "هنوز داده‌ای برای نمایش")
             return
-        pad_l, pad_r, pad_t, pad_b = 30, 15, 20, 35
-        chart_w, chart_h = width-pad_l-pad_r, height-pad_t-pad_b
-        max_value = max(values) or 1
-        for i in range(4):
-            y = pad_t+chart_h*i/3
-            c.create_line(pad_l, y, width-pad_r, y, fill=cl["border"], dash=(2, 4))
-        points = [(pad_l+chart_w*i/max(1, len(values)-1),
-                   pad_t+chart_h-value/max_value*chart_h) for i, value in enumerate(values)]
-        polygon = [(pad_l, pad_t+chart_h)] + points + [(width-pad_r, pad_t+chart_h)]
-        c.create_polygon([n for point in polygon for n in point], fill=cl["border"], outline="", smooth=True)
-        c.create_line([n for point in points for n in point], fill="#06b6d4", width=2, smooth=True)
-        labels = ["ش", "ی", "د", "س", "چ", "پ", "ج"]
-        for i, (x, y) in enumerate(points):
-            c.create_oval(x-4, y-4, x+4, y+4, fill=cl["card"], outline="#06b6d4", width=2)
-            c.create_text(x, pad_t+chart_h+15, text=labels[i], fill=cl["muted"], font=("Segoe UI", 8))
+        left, right, top, bottom = 30, 15, 20, 35
+        graph_w, graph_h = width-left-right, height-top-bottom
+        maximum = max(values) or 1
+        for index in range(4):
+            y = top+graph_h*index/3
+            canvas.create_line(left, y, width-right, y, fill=p["border"], dash=(2, 4))
+        points = [(left+graph_w*i/max(1, len(values)-1), top+graph_h-value/maximum*graph_h)
+                  for i, value in enumerate(values)]
+        canvas.create_line([coord for point in points for coord in point], fill="#168CCB", width=2, smooth=True)
+        for x, y in points:
+            canvas.create_oval(x-3, y-3, x+3, y+3, fill=p["card"], outline="#168CCB", width=2)
+        for index, label in enumerate(("ش", "ی", "د", "س", "چ", "پ", "ج")):
+            x = left+graph_w*index/max(1, len(values)-1)
+            canvas.create_text(x, height-12, text=label, fill=p["muted"], font=(TOKENS["font_family"], 8))
 
     def _get_weekly_hours(self):
         try:
@@ -384,8 +424,7 @@ class DashboardTab(ScrollableFrame):
                 values = []
                 for offset in range(6, -1, -1):
                     day = today-timedelta(days=offset)
-                    cursor.execute("SELECT COALESCE(SUM(hours),0) AS s FROM timesheets WHERE work_date=?",
-                                   (day.isoformat(),))
+                    cursor.execute("SELECT COALESCE(SUM(hours),0) AS s FROM timesheets WHERE work_date=?", (day.isoformat(),))
                     values.append(cursor.fetchone()["s"])
                 return values
             finally:
@@ -394,81 +433,87 @@ class DashboardTab(ScrollableFrame):
             return [0]*7
 
     def _draw_pie_chart(self):
-        c = self.pie_canvas
-        c.delete("all")
-        c.update_idletasks()
-        width, height, cl = c.winfo_width() or 400, c.winfo_height() or 210, self.colors
+        canvas = self.pie_canvas
+        canvas.delete("all")
+        canvas.update_idletasks()
+        width, height, p = canvas.winfo_width() or 400, canvas.winfo_height() or 210, self.colors
         data = db_stats.project_status_counts()
         if not data:
-            self._empty(c, width, height, "هنوز پروژه‌ای ثبت نشده")
+            self._empty(canvas, width, height, "هنوز پروژه‌ای ثبت نشده")
             return
         cx, cy, radius = 90, height/2, 70
         total, start = sum(value for _, value in data) or 1, 90
-        for i, (label, value) in enumerate(data):
+        for index, (label, value) in enumerate(data):
             extent = value/total*360
-            c.create_arc(cx-radius, cy-radius, cx+radius, cy+radius, start=start-1,
-                         extent=-(extent-2), fill=CHART_COLORS[i%len(CHART_COLORS)],
-                         outline=cl["card"], width=2)
+            canvas.create_arc(cx-radius, cy-radius, cx+radius, cy+radius, start=start-1,
+                              extent=-(extent-2), fill=CHART_COLORS[index%len(CHART_COLORS)],
+                              outline=p["card"], width=2)
             start -= extent
         inner = radius*.58
-        c.create_oval(cx-inner, cy-inner, cx+inner, cy+inner, fill=cl["card"], outline="")
-        c.create_text(cx, cy-8, text=str(total), fill=cl["text"], font=("Segoe UI", 18, "bold"))
-        c.create_text(cx, cy+12, text="پروژه", fill=cl["muted"], font=("Segoe UI", 8))
+        canvas.create_oval(cx-inner, cy-inner, cx+inner, cy+inner, fill=p["card"], outline="")
+        canvas.create_text(cx, cy-8, text=str(total), fill=p["text"], font=(TOKENS["font_family"], 18, "bold"))
+        canvas.create_text(cx, cy+12, text="پروژه", fill=p["muted"], font=(TOKENS["font_family"], 8))
         lx, ly = cx+radius+15, cy-len(data)*14
-        for i, (label, value) in enumerate(data):
-            color = CHART_COLORS[i%len(CHART_COLORS)]
-            c.create_oval(lx, ly+2, lx+10, ly+12, fill=color, outline="")
-            c.create_text(lx+16, ly+7, text=f"{label} ({value})", fill=cl["text"], font=("Segoe UI", 9), anchor="w")
+        for index, (label, value) in enumerate(data):
+            color = CHART_COLORS[index%len(CHART_COLORS)]
+            canvas.create_oval(lx, ly+2, lx+10, ly+12, fill=color, outline="")
+            canvas.create_text(lx+16, ly+7, text=f"{label} ({value})", fill=p["text"],
+                               font=(TOKENS["font_family"], 9), anchor="w")
             ly += 22
 
     def _draw_hbars(self):
-        c = self.hbars_canvas
-        c.delete("all")
-        c.update_idletasks()
-        width, height, cl = c.winfo_width() or 400, c.winfo_height() or 260, self.colors
+        canvas = self.hbars_canvas
+        canvas.delete("all")
+        canvas.update_idletasks()
+        width, p = canvas.winfo_width() or 400, self.colors
         data = db_stats.hours_per_engineer()
         if not data:
-            self._empty(c, width, height, "هنوز ساعت کاری ثبت نشده")
+            self._empty(canvas, width, canvas.winfo_height() or 260, "هنوز ساعت کاری ثبت نشده")
             return
-        max_value = max((value for _, value in data), default=0) or 1
-        name_w, value_w, pad, row_h, bar_h = 90, 55, 12, 30, 14
-        left, right = pad+value_w, width-name_w-pad
-        for i, (name, value) in enumerate(data[:8]):
-            y = pad+i*row_h
-            c.create_text(width-pad, y+bar_h/2, text=name, anchor="e", fill=cl["text"], font=("Segoe UI", 10, "bold"))
-            c.create_rectangle(left, y+2, right, y+2+bar_h, fill=cl["bg"], outline="")
-            bar_width = value/max_value*(right-left)
-            color = CHART_COLORS[i%len(CHART_COLORS)]
-            c.create_rectangle(right-bar_width, y+2, right, y+2+bar_h, fill=color, outline="")
-            c.create_text(pad+value_w-8, y+bar_h/2+2, text=f"{value:,.0f}h", anchor="e", fill=color, font=("Segoe UI", 9, "bold"))
+        maximum = max((value for _, value in data), default=0) or 1
+        pad, name_width, value_width, row_height, bar_height = 12, 90, 55, 30, 14
+        left, right = pad+value_width, width-name_width-pad
+        for index, (name, value) in enumerate(data[:8]):
+            y = pad+index*row_height
+            canvas.create_text(width-pad, y+bar_height/2, text=name, anchor="e", fill=p["text"],
+                               font=(TOKENS["font_family"], 9, "bold"))
+            canvas.create_rectangle(left, y+2, right, y+2+bar_height, fill=p["bg"], outline="")
+            bar_width = value/maximum*(right-left)
+            color = CHART_COLORS[index%len(CHART_COLORS)]
+            canvas.create_rectangle(right-bar_width, y+2, right, y+2+bar_height, fill=color, outline="")
+            canvas.create_text(pad+value_width-8, y+bar_height/2+2, text=f"{value:,.0f}h", anchor="e",
+                               fill=color, font=(TOKENS["font_family"], 9, "bold"))
 
     def _draw_vbars(self):
-        c = self.vbars_canvas
-        c.delete("all")
-        c.update_idletasks()
-        width, height, cl = c.winfo_width() or 400, c.winfo_height() or 260, self.colors
-        data = db_stats.expenses_per_project()
+        canvas = self.vbars_canvas
+        canvas.delete("all")
+        canvas.update_idletasks()
+        width, height, p = canvas.winfo_width() or 400, canvas.winfo_height() or 260, self.colors
+        data = db_stats.expenses_per_project()[:6]
         if not data:
-            self._empty(c, width, height, "هنوز هزینه‌ای ثبت نشده")
+            self._empty(canvas, width, height, "هنوز هزینه‌ای ثبت نشده")
             return
-        data = data[:6]
-        max_value = max((value for _, value in data), default=0) or 1
+        maximum = max((value for _, value in data), default=0) or 1
         left, right, top, bottom = 40, 15, 25, 50
-        chart_h, chart_w, base = height-top-bottom, width-left-right, height-bottom
-        slot, bar_w = chart_w/len(data), chart_w/len(data)*.5
-        for i in range(4):
-            y = top+chart_h*i/3
-            c.create_line(left, y, width-right, y, fill=cl["border"], dash=(2, 4))
-        for i, (label, value) in enumerate(data):
-            center = left+slot*(i+.5)
-            bar_h = value/max_value*chart_h
-            color = CHART_COLORS[i%len(CHART_COLORS)]
-            c.create_rectangle(center-bar_w/2, base-bar_h, center+bar_w/2, base, fill=color, outline="")
-            c.create_text(center, base-bar_h-8, text=f"{value:,.0f}", fill=color, font=("Segoe UI", 8, "bold"))
-            c.create_text(center, base+14, text=(label[:10]+"…") if len(label)>10 else label, fill=cl["muted"], font=("Segoe UI", 8))
+        graph_h, graph_w, baseline = height-top-bottom, width-left-right, height-bottom
+        slot, bar_width = graph_w/len(data), graph_w/len(data)*.5
+        for index in range(4):
+            y = top+graph_h*index/3
+            canvas.create_line(left, y, width-right, y, fill=p["border"], dash=(2, 4))
+        for index, (label, value) in enumerate(data):
+            center = left+slot*(index+.5)
+            bar_height = value/maximum*graph_h
+            color = CHART_COLORS[index%len(CHART_COLORS)]
+            canvas.create_rectangle(center-bar_width/2, baseline-bar_height, center+bar_width/2, baseline,
+                                    fill=color, outline="")
+            canvas.create_text(center, baseline-bar_height-8, text=f"{value:,.0f}", fill=color,
+                               font=(TOKENS["font_family"], 8, "bold"))
+            short = label[:10]+"…" if len(label)>10 else label
+            canvas.create_text(center, baseline+14, text=short, fill=p["muted"], font=(TOKENS["font_family"], 8))
 
     def _empty(self, canvas, width, height, text):
-        canvas.create_text(width/2, height/2, text=f"📭  {text}", fill=self.colors["muted"], font=("Segoe UI", 10))
+        canvas.create_text(width/2, height/2, text=f"📭  {text}", fill=self.colors["muted"],
+                           font=(TOKENS["font_family"], 10))
 
     def export_excel(self):
         try:
