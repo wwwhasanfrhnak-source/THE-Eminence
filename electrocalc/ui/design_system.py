@@ -3,7 +3,7 @@
 from tkinter import ttk
 
 TOKENS = {
-    "font_family": "Segoe UI",
+    "font_family": "Vazirmatn",
     "font_mono": "Consolas",
     "font_small": 9,
     "font_body": 10,
@@ -19,8 +19,6 @@ TOKENS = {
     "radius_lg": 18,
 }
 
-# Premium base palettes are deliberately limited to the standard light/dark
-# choices. The application's named color themes retain their original identity.
 PREMIUM_PALETTES = {
     "light": {
         "bg": "#F4F7FC", "sidebar": "#FFFFFF", "card": "#FFFFFF",
@@ -38,76 +36,78 @@ PREMIUM_PALETTES = {
         "bg": "#F3F6FB", "sidebar": "#FFFFFF", "card": "#FFFFFF",
         "border": "#E2E8F0", "accent": "#2563C7", "text": "#192536",
         "muted": "#64748B", "h_start": "#2056A8", "h_end": "#1685BD",
-        "success": "#168A65", "danger": "#C83E4D", "status_bar": "#EAF0F8",
     },
     "windows11_dark": {
-        "bg": "#0D1420", "sidebar": "#121D2C", "card": "#182538",
-        "border": "#2A3A51", "accent": "#55A5F5", "text": "#F2F6FC",
-        "muted": "#A1AEC0", "h_start": "#173D68", "h_end": "#087B9C",
-        "success": "#55C994", "danger": "#FF818B", "status_bar": "#0A111C",
+        "bg": "#1E1F22", "sidebar": "#2B2D31", "card": "#313338",
+        "border": "#3F4147", "accent": "#5B8DEF", "text": "#F2F3F5",
+        "muted": "#9CA3AF", "h_start": "#4A6FA5", "h_end": "#3B7999",
     },
 }
 
+def premium_palette(name_or_dict="light"):
+    """Accept either a palette name (str) or a palette dict."""
+    if isinstance(name_or_dict, dict):
+        return name_or_dict
+    return PREMIUM_PALETTES.get(name_or_dict, PREMIUM_PALETTES["light"])
 
-def premium_palette(name, base):
-    """Return a fresh palette, upgrading standard themes without mutating source data."""
-    result = dict(base)
-    result.update(PREMIUM_PALETTES.get(name, {}))
-    return result
+def apply_ttk_styles(style: ttk.Style, palette: dict, font_family: str = "Vazirmatn"):
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+    style.configure("TFrame", background=palette.get("card", "#FFFFFF"))
+    style.configure("TLabel", background=palette.get("card", "#FFFFFF"), foreground=palette.get("text", "#000000"),
+                    font=(font_family, TOKENS["font_body"]))
+    style.configure("TButton", font=(font_family, TOKENS["font_body"], "bold"),
+                    padding=(12, 8), borderwidth=0,
+                    background=palette.get("card", "#FFFFFF"), foreground=palette.get("text", "#000000"))
+    style.configure("Accent.TButton", background=palette.get("accent", "#3867E8"), foreground="#FFFFFF")
+    style.configure("TEntry", fieldbackground=palette.get("card", "#FFFFFF"), foreground=palette.get("text", "#000000"),
+                    insertcolor=palette.get("text", "#000000"), bordercolor=palette.get("border", "#CCCCCC"), padding=(10, 7))
+    style.configure("Treeview", background=palette.get("card", "#FFFFFF"), foreground=palette.get("text", "#000000"),
+                    fieldbackground=palette.get("card", "#FFFFFF"), rowheight=34,
+                    bordercolor=palette.get("border", "#CCCCCC"), font=(font_family, TOKENS["font_body"]))
+    style.configure("Treeview.Heading", background=palette.get("sidebar", "#FFFFFF"),
+                    foreground=palette.get("muted", "#888888"), font=(font_family, 9, "bold"),
+                    padding=(10, 9))
+    style.map("Treeview", background=[("selected", palette.get("accent", "#3867E8"))], foreground=[("selected", "white")])
 
+def configure_ttk(style: ttk.Style, palette_name="light"):
+    palette = premium_palette(palette_name)
+    apply_ttk_styles(style, palette, font_family=TOKENS["font_family"])
 
-def configure_ttk(style, palette):
-    """Apply consistent typography, states and surfaces to ttk controls."""
-    style.theme_use("clam")
-    font = (TOKENS["font_family"], TOKENS["font_body"])
-    style.configure("TFrame", background=palette["bg"])
-    style.configure("Surface.TFrame", background=palette["card"])
-    style.configure("TLabel", background=palette["bg"], foreground=palette["text"], font=font)
-    style.configure("Surface.TLabel", background=palette["card"], foreground=palette["text"], font=font)
-    style.configure("Muted.TLabel", background=palette["bg"], foreground=palette["muted"], font=font)
-    style.configure("Title.TLabel", background=palette["bg"], foreground=palette["text"],
-                    font=(TOKENS["font_family"], TOKENS["font_title"], "bold"))
-    style.configure("TLabelframe", background=palette["card"], bordercolor=palette["border"],
-                    relief="solid", padding=TOKENS["space_md"])
-    style.configure("TLabelframe.Label", background=palette["card"], foreground=palette["accent"],
-                    font=(TOKENS["font_family"], TOKENS["font_section"], "bold"))
-    style.configure("TButton", font=(TOKENS["font_family"], TOKENS["font_body"], "bold"),
-                    padding=(TOKENS["space_md"], TOKENS["space_sm"]), borderwidth=0,
-                    background=palette["card"], foreground=palette["text"])
-    style.map("TButton", background=[("active", palette["border"]), ("pressed", palette["border"])],
-              foreground=[("disabled", palette["muted"])])
-    style.configure("Accent.TButton", background=palette["accent"], foreground="#FFFFFF")
-    style.map("Accent.TButton", background=[("active", palette["h_end"]), ("pressed", palette["h_start"])])
-    style.configure("TEntry", padding=(TOKENS["space_sm"], TOKENS["space_sm"]),
-                    fieldbackground=palette["card"], foreground=palette["text"],
-                    bordercolor=palette["border"], insertcolor=palette["text"])
-    style.configure("TCombobox", padding=(TOKENS["space_sm"], 6),
-                    fieldbackground=palette["card"], foreground=palette["text"],
-                    bordercolor=palette["border"])
-    style.configure("Treeview", background=palette["card"], foreground=palette["text"],
-                    fieldbackground=palette["card"], rowheight=34, bordercolor=palette["border"],
-                    font=font)
-    style.configure("Treeview.Heading", background=palette["sidebar"], foreground=palette["muted"],
-                    font=(TOKENS["font_family"], TOKENS["font_small"], "bold"), padding=10)
-    style.map("Treeview", background=[("selected", palette["accent"])],
-              foreground=[("selected", "#FFFFFF")])
-    style.configure("TScrollbar", background=palette["border"], troughcolor=palette["bg"],
-                    bordercolor=palette["bg"], arrowsize=12)
+# ==== توابع سازگاری (حالا هم رشته و هم دیکشنری قبول می‌کنن) ====
+def style_toplevel(window, palette="light"):
+    p = premium_palette(palette)
+    try:
+        window.configure(bg=p["bg"])
+    except Exception:
+        pass
 
+def style_label(label, palette="light"):
+    p = premium_palette(palette)
+    try:
+        label.configure(bg=p["bg"], fg=p["text"])
+    except Exception:
+        pass
 
-def style_toplevel(window, palette):
-    """Apply the shared app surface to a Tk/Toplevel window."""
-    window.configure(bg=palette["bg"])
+def style_frame(frame, palette="light"):
+    p = premium_palette(palette)
+    try:
+        frame.configure(bg=p["bg"])
+    except Exception:
+        pass
 
+def style_button(button, palette="light"):
+    p = premium_palette(palette)
+    try:
+        button.configure(bg=p["accent"], fg="#FFFFFF")
+    except Exception:
+        pass
 
-def style_label(widget, palette, role="body"):
-    """Apply a palette-aware style to a classic Tk label."""
-    options = {"bg": palette["bg"], "fg": palette["text"], "font": (TOKENS["font_family"], TOKENS["font_body"])}
-    if role == "muted":
-        options["fg"] = palette["muted"]
-    elif role == "title":
-        options["font"] = (TOKENS["font_family"], TOKENS["font_title"], "bold")
-    elif role == "brand":
-        options.update(fg=palette["accent"], font=(TOKENS["font_family"], TOKENS["font_title"], "bold"))
-    widget.configure(**options)
-    return widget
+def style_entry(entry, palette="light"):
+    p = premium_palette(palette)
+    try:
+        entry.configure(bg=p["card"], fg=p["text"], insertbackground=p["text"])
+    except Exception:
+        pass

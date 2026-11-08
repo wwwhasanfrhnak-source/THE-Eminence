@@ -121,6 +121,9 @@ class FinanceTab(tk.Frame):
                               expand=True, padx=5)
 
     # ====================================================
+    def refresh(self):
+        self._refresh()
+
     def _on_period_change(self):
         self.period = self.period_var.get()
         self.start_date = None

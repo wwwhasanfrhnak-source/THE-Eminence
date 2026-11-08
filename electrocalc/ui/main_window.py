@@ -197,6 +197,7 @@ class MainWindow(TouchScrollable):
         self._proj_label = None
         self._timer_label = None
         self.status_var = None
+        self._refresh_job = None
 
         try:
             from electrocalc.core import settings as st
@@ -1447,6 +1448,24 @@ class MainWindow(TouchScrollable):
     # ========================================================
     # نمایش صفحه
     # ========================================================
+
+    def _start_auto_refresh(self):
+        if getattr(self, "_refresh_job", None):
+            try:
+                self.root.after_cancel(self._refresh_job)
+            except Exception:
+                pass
+        def auto_refresh_loop():
+            if self.current_page >= 0 and self.current_page < len(self.pages):
+                page = self.pages[self.current_page]
+                if hasattr(page, "refresh") and callable(getattr(page, "refresh")):
+                    try:
+                        page.refresh()
+                    except Exception as e:
+                        print(f"Auto-refresh error: {e}")
+            self._refresh_job = self.root.after(2000, auto_refresh_loop)
+        self._refresh_job = self.root.after(2000, auto_refresh_loop)
+
     def _select_page(self, idx):
         if idx < 0 or idx >= len(self.pages) or idx == self.current_page:
             return
@@ -1465,6 +1484,7 @@ class MainWindow(TouchScrollable):
             self.pages[idx].pack(fill="both", expand=True)
             self.sidebar_buttons[idx].set_active(True)
             self.current_page = idx
+            self._start_auto_refresh()
             title = self._tab_classes[idx][0]
             self._page_title_label.config(text=title)
             self._page_subtitle_label.config(
