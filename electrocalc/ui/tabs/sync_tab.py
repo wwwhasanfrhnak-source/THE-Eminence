@@ -1,394 +1,408 @@
-"""تب همگام‌سازی — ارسال داده + دریافت + بروزرسانی."""
+"""GitHub synchronization tab."""
 
+import queue
+import subprocess
+import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
+from tkinter import messagebox, ttk
+from typing import Any, cast
 
-from electrocalc.core import sync
+from electrocalc.ui.components import modern_card
+from electrocalc.ui.design_system import TOKENS, premium_palette
+from electrocalc.ui.scrollable_frame import ScrollableFrame
+
+class _FallbackModernCard(tk.Frame):
+    """Theme-aware card fallback while the shared component is unavailable."""
+
+    def __init__(self, parent, bg, border_color, **kwargs):
+        super().__init__(
+            parent,
+            bg=bg,
+            highlightbackground=border_color,
+            highlightthickness=1,
+            **kwargs,
+        )
+
+
+ModernCard = getattr(modern_card, "ModernCard", _FallbackModernCard)
 
 
 class SyncTab(tk.Frame):
+    """Pull and push the application's Git repository."""
+
     def __init__(self, parent, app):
-        super().__init__(parent, bg="#f8fafc")
+        palette = cast(
+            dict[str, Any],
+            getattr(app, "palette", None) or premium_palette("dark"),
+        )
+        super().__init__(parent, bg=palette["bg"])
         self.app = app
-        self.current_user = dict(app.current_user) if app.current_user else {}
-        self.username = self.current_user.get("username", "")
-        self.role = self.current_user.get("role", "engineer")
-        self.is_admin = (self.role == "admin")
+        self.palette: dict[str, Any] = palette
+        self._repo_root = None
+        self._busy = False
+        self._destroyed = False
+        self._events = queue.Queue()
+        self._poll_job = None
+        self._auto_job = None
 
         self._build_ui()
-        self._load_settings()
+        self._poll_job = self.after(100, self._poll_events)
+        self._refresh_status()
 
-    # ========================================================
-    # UI
-    # ========================================================
     def _build_ui(self):
-        # هدر
-        header = tk.Frame(self, bg="#7c3aed", height=60)
-        header.pack(fill="x")
-        header.pack_propagate(False)
+        p: dict[str, Any] = self.palette
+        self.content = ScrollableFrame(self, padding=22, bg=p["bg"])
+        self.content.pack(fill="both", expand=True)
+        body = self.content.inner
+
+        header = tk.Frame(body, bg=p["bg"])
+        header.pack(fill="x", pady=(0, 16))
+        tk.Label(
+            header,
+            text="⇄",
+            bg=p["bg"],
+            fg=p["accent"],
+            font=("Segoe UI Symbol", 22, "bold"),
+        ).pack(side="right", padx=(0, 10))
+        tk.Label(
+            header,
+            text="همگام‌سازی با گیت‌هاب",
+            bg=p["bg"],
+            fg=p["text"],
+            font=(TOKENS["font_family"], TOKENS["font_title"], "bold"),
+            anchor="e",
+        ).pack(side="right")
+
+        _, status_body = self._make_card(body, "وضعیت اتصال", "●")
+        status_row = tk.Frame(status_body, bg=p["card"])
+        status_row.pack(fill="x")
+        self.status_dot = tk.Label(
+            status_row, text="●", bg=p["card"], fg=p["muted"],
+            font=("Segoe UI", 14),
+        )
+        self.status_dot.pack(side="right", padx=(0, 8))
+        self.status_label = tk.Label(
+            status_row, text="در حال بررسی مخزن...", bg=p["card"],
+            fg=p["muted"], font=(TOKENS["font_family"], 10), anchor="e",
+        )
+        self.status_label.pack(side="right")
+        self.branch_label = tk.Label(
+            status_body, text="شاخه: —", bg=p["card"], fg=p["muted"],
+            font=(TOKENS["font_family"], 9), anchor="e",
+        )
+        self.branch_label.pack(fill="x", pady=(7, 0))
+        self.remote_label = tk.Label(
+            status_body, text="مخزن: —", bg=p["card"], fg=p["muted"],
+            font=(TOKENS["font_family"], 9), anchor="e", justify="right",
+            wraplength=900,
+        )
+        self.remote_label.pack(fill="x", pady=(3, 0))
+
+        _, actions_body = self._make_card(body, "عملیات همگام‌سازی", "⇅")
+        button_row = tk.Frame(actions_body, bg=p["card"])
+        button_row.pack(fill="x", pady=(0, 10))
+        self.pull_button = tk.Button(
+            button_row,
+            text="دریافت از گیت‌هاب",
+            command=self._pull,
+            bg=p["accent"], fg="#FFFFFF",
+            activebackground=p["accent"], activeforeground="#FFFFFF",
+            relief="flat", cursor="hand2", padx=16, pady=9,
+            font=(TOKENS["font_family"], 10, "bold"), state="disabled",
+        )
+        self.pull_button.pack(side="right", padx=(0, 8))
+        self.push_button = tk.Button(
+            button_row,
+            text="ارسال به گیت‌هاب",
+            command=self._push,
+            bg=p["success"], fg="#FFFFFF",
+            activebackground=p["success"], activeforeground="#FFFFFF",
+            relief="flat", cursor="hand2", padx=16, pady=9,
+            font=(TOKENS["font_family"], 10, "bold"), state="disabled",
+        )
+        self.push_button.pack(side="right")
 
         tk.Label(
-            header, text="🔄  همگام‌سازی با دفتر",
-            bg="#7c3aed", fg="white",
-            font=("Segoe UI", 16, "bold"),
-        ).pack(side="right", padx=20, pady=15)
-
-        # محتوا
-        content = tk.Frame(self, bg="#f8fafc")
-        content.pack(fill="both", expand=True, padx=20, pady=15)
-
-        # ============ کارت مسیر Share ============
-        path_card = tk.LabelFrame(
-            content, text=" 📁 مسیر پوشه Share ",
-            bg="#f8fafc", font=("Segoe UI", 11, "bold"),
-            fg="#7c3aed", padx=15, pady=10,
+            actions_body,
+            text="گزارش عملیات",
+            bg=p["card"], fg=p["muted"],
+            font=(TOKENS["font_family"], 9, "bold"), anchor="e",
+        ).pack(fill="x", pady=(2, 5))
+        log_frame = tk.Frame(
+            actions_body, bg=p["border"], highlightthickness=1,
+            highlightbackground=p["border"],
         )
-        path_card.pack(fill="x", pady=8)
-
-        row = tk.Frame(path_card, bg="#f8fafc")
-        row.pack(fill="x")
-
-        tk.Label(row, text="مسیر:", bg="#f8fafc",
-                 font=("Segoe UI", 10)).pack(side="right", padx=5)
-
-        self.path_var = tk.StringVar()
-        tk.Entry(row, textvariable=self.path_var,
-                 font=("Segoe UI", 10)).pack(
-            side="right", padx=5, fill="x", expand=True)
-
-        tk.Button(row, text="📂 انتخاب",
-                  bg="#06b6d4", fg="white",
-                  font=("Segoe UI", 9, "bold"),
-                  relief="flat", padx=10, pady=4, cursor="hand2",
-                  command=self._browse).pack(side="right", padx=3)
-
-        tk.Button(row, text="💾 ذخیره",
-                  bg="#10b981", fg="white",
-                  font=("Segoe UI", 9, "bold"),
-                  relief="flat", padx=10, pady=4, cursor="hand2",
-                  command=self._save_path).pack(side="right", padx=3)
-
-        tk.Button(row, text="🔌 تست",
-                  bg="#f59e0b", fg="white",
-                  font=("Segoe UI", 9, "bold"),
-                  relief="flat", padx=10, pady=4, cursor="hand2",
-                  command=self._test).pack(side="right", padx=3)
-
-        # ============ کارت وضعیت ============
-        status_card = tk.LabelFrame(
-            content, text=" 📊 وضعیت ",
-            bg="#f8fafc", font=("Segoe UI", 11, "bold"),
-            fg="#7c3aed", padx=15, pady=10,
+        log_frame.pack(fill="both", expand=True)
+        self.log_text = tk.Text(
+            log_frame, height=10, wrap="word", state="disabled",
+            bg=p["bg"], fg=p["text"], insertbackground=p["text"],
+            selectbackground=p["accent"], relief="flat", padx=10, pady=8,
+            font=(TOKENS["font_mono"], 9),
         )
-        status_card.pack(fill="x", pady=8)
+        log_scrollbar = ttk.Scrollbar(
+            log_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
+        self.log_text.pack(side="right", fill="both", expand=True)
+        log_scrollbar.pack(side="left", fill="y")
 
-        self.status_lbl = tk.Label(
-            status_card, text="⏳ در حال چک...",
-            bg="#f8fafc", fg="#6b7280",
-            font=("Segoe UI", 11), justify="right", anchor="e")
-        self.status_lbl.pack(fill="x")
+        _, auto_body = self._make_card(body, "همگام‌سازی خودکار", "◷")
+        auto_row = tk.Frame(auto_body, bg=p["card"])
+        auto_row.pack(fill="x")
+        self.auto_sync_var = tk.BooleanVar(value=False)
+        self.auto_sync_toggle = ttk.Checkbutton(
+            auto_row,
+            text="دریافت خودکار تغییرات هر ۶۰ ثانیه",
+            variable=self.auto_sync_var,
+            command=self._toggle_auto_sync,
+        )
+        self.auto_sync_toggle.pack(side="right")
+        tk.Label(
+            auto_row,
+            text="ارسال به مخزن فقط با فشردن دکمه ارسال انجام می‌شود.",
+            bg=p["card"], fg=p["muted"],
+            font=(TOKENS["font_family"], 9), anchor="e",
+        ).pack(side="left", padx=(8, 0))
 
-        # ============ کارت ارسال (مهندس) ============
-        if not self.is_admin:
-            send_card = tk.LabelFrame(
-                content, text=" 📤 ارسال داده به دفتر ",
-                bg="#f8fafc", font=("Segoe UI", 11, "bold"),
-                fg="#10b981", padx=15, pady=10,
+    def _make_card(self, parent, title, icon):
+        p: dict[str, Any] = self.palette
+        card = ModernCard(parent, bg=p["card"], border_color=p["border"])
+        card.pack(fill="x", pady=(0, 12))
+        body = tk.Frame(card, bg=p["card"], padx=16, pady=13)
+        body.pack(fill="both", expand=True)
+        heading = tk.Frame(body, bg=p["card"])
+        heading.pack(fill="x", pady=(0, 10))
+        tk.Label(
+            heading, text=title, bg=p["card"], fg=p["text"],
+            font=(TOKENS["font_family"], TOKENS["font_section"], "bold"),
+            anchor="e",
+        ).pack(side="right")
+        tk.Label(
+            heading, text=icon, bg=p["card"], fg=p["accent"],
+            font=("Segoe UI Symbol", 13, "bold"),
+        ).pack(side="right", padx=(0, 7))
+        return card, body
+
+    def _find_repository(self):
+        candidates = (Path.cwd(), Path(__file__).resolve().parents[3])
+        seen = set()
+        for candidate in candidates:
+            candidate = candidate.resolve()
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=candidate,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
-            send_card.pack(fill="x", pady=8)
+            if result.returncode == 0:
+                return Path(result.stdout.strip()).resolve()
+        return None
 
-            tk.Label(
-                send_card,
-                text="داده‌های جدیدت (گزارش، ساعت کار، هزینه) رو به دفتر می‌فرسته.",
-                bg="#f8fafc", fg="#6b7280",
-                font=("Segoe UI", 10), anchor="e",
-            ).pack(anchor="e", pady=(0, 8))
+    def _refresh_status(self):
+        self.status_label.config(text="در حال بررسی مخزن...", fg=self.palette["muted"])
+        self.status_dot.config(fg=self.palette["muted"])
+        threading.Thread(target=self._inspect_repository, daemon=True).start()
 
-            self.send_btn = tk.Button(
-                send_card, text="📤 ارسال به دفتر",
-                bg="#10b981", fg="white",
-                font=("Segoe UI", 12, "bold"),
-                relief="flat", padx=25, pady=10, cursor="hand2",
-                command=self._send_data,
-            )
-            self.send_btn.pack(side="right", padx=5)
-
-            self.last_sync_lbl = tk.Label(
-                send_card, text="",
-                bg="#f8fafc", fg="#6b7280",
-                font=("Segoe UI", 9), anchor="e")
-            self.last_sync_lbl.pack(side="right", padx=10)
-
-        # ============ کارت دریافت (مدیر) ============
-        if self.is_admin:
-            recv_card = tk.LabelFrame(
-                content, text=" 📥 دریافت از مهندسین ",
-                bg="#f8fafc", font=("Segoe UI", 11, "bold"),
-                fg="#f59e0b", padx=15, pady=10,
-            )
-            recv_card.pack(fill="x", pady=8)
-
-            tk.Label(
-                recv_card,
-                text="همه فایل‌های sync مهندسین رو می‌خونه و تو دیتابیس ادغام می‌کنه.",
-                bg="#f8fafc", fg="#6b7280",
-                font=("Segoe UI", 10), anchor="e",
-            ).pack(anchor="e", pady=(0, 8))
-
-            self.recv_btn = tk.Button(
-                recv_card, text="📥 دریافت از مهندسین",
-                bg="#f59e0b", fg="white",
-                font=("Segoe UI", 12, "bold"),
-                relief="flat", padx=25, pady=10, cursor="hand2",
-                command=self._recv_data,
-            )
-            self.recv_btn.pack(side="right", padx=5)
-
-            self.pending_lbl = tk.Label(
-                recv_card, text="",
-                bg="#f8fafc", fg="#6b7280",
-                font=("Segoe UI", 9), anchor="e")
-            self.pending_lbl.pack(side="right", padx=10)
-
-        # ============ کارت بروزرسانی ============
-        update_card = tk.LabelFrame(
-            content, text=" 📦 بروزرسانی برنامه ",
-            bg="#f8fafc", font=("Segoe UI", 11, "bold"),
-            fg="#ef4444", padx=15, pady=10,
-        )
-        update_card.pack(fill="x", pady=8)
-
-        self.update_lbl = tk.Label(
-            update_card, text="",
-            bg="#f8fafc", fg="#1f2937",
-            font=("Segoe UI", 10), justify="right", anchor="e")
-        self.update_lbl.pack(fill="x")
-
-        self.changelog_lbl = tk.Label(
-            update_card, text="",
-            bg="#f8fafc", fg="#6b7280",
-            font=("Segoe UI", 9), justify="right", anchor="e",
-            wraplength=700)
-        self.changelog_lbl.pack(fill="x", pady=(5, 8))
-
-        self.install_btn = tk.Button(
-            update_card, text="📥 دانلود و نصب بروزرسانی",
-            bg="#ef4444", fg="white",
-            font=("Segoe UI", 11, "bold"),
-            relief="flat", padx=25, pady=8, cursor="hand2",
-            command=self._install_update, state="disabled",
-        )
-        self.install_btn.pack(side="right", padx=5)
-
-        # Progress
-        self.progress = ttk.Progressbar(
-            content, orient="horizontal", length=600, mode="determinate")
-        self.progress.pack(fill="x", pady=8)
-
-        # دکمه چک مجدد
-        tk.Button(
-            content, text="🔄 چک مجدد",
-            bg="#06b6d4", fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat", padx=20, pady=8, cursor="hand2",
-            command=self._refresh_all,
-        ).pack(side="right", padx=5, pady=5)
-
-    # ========================================================
-    # Events
-    # ========================================================
-    def _load_settings(self):
-        path = sync.get_share_path()
-        if path:
-            self.path_var.set(str(path))
-        self._refresh_all()
-
-    def _browse(self):
-        folder = filedialog.askdirectory(
-            title="انتخاب پوشه Share",
-            initialdir=str(sync.get_share_path() or Path.home()),
-        )
-        if folder:
-            self.path_var.set(folder)
-
-    def _save_path(self):
-        path = self.path_var.get().strip()
-        if not path:
-            messagebox.showwarning("هشدار", "مسیر رو وارد کن")
-            return
-
-        sync.set_share_path(path)
-        messagebox.showinfo("موفق", "مسیر ذخیره شد")
-        self._refresh_all()
-
-    def _test(self):
-        ok, msg = sync.test_connection()
-        if ok:
-            messagebox.showinfo("موفق", f"✅ {msg}")
-        else:
-            messagebox.showerror("خطا", f"❌ {msg}")
-
-    def _refresh_all(self):
-        self.progress["value"] = 0
-
-        share = sync.get_share_path()
-
-        # وضعیت
-        if not share:
-            self.status_lbl.config(
-                text="⚠️ مسیر Share تنظیم نشده",
-                fg="#f59e0b")
-            self._clear_update_card()
-            return
-
-        if not share.exists():
-            self.status_lbl.config(
-                text=f"❌ پوشه Share پیدا نشد:\n{share}",
-                fg="#ef4444")
-            self._clear_update_card()
-            return
-
-        self.status_lbl.config(
-            text=f"✅ پوشه Share پیدا شد\n{share}",
-            fg="#10b981")
-
-        # برای مهندس: آخرین sync
-        if not self.is_admin:
-            last = sync.get_last_sync(self.username)
-            if last:
-                self.last_sync_lbl.config(
-                    text=f"آخرین ارسال: {last[:16]}")
-            else:
-                self.last_sync_lbl.config(
-                    text="هنوز چیزی ارسال نکردی")
-
-        # برای مدیر: تعداد فایل‌های در انتظار
-        if self.is_admin:
-            pending = sync.get_pending_syncs()
-            if pending:
-                self.pending_lbl.config(
-                    text=f"{len(pending)} فایل در انتظار دریافت",
-                    fg="#f59e0b")
-            else:
-                self.pending_lbl.config(
-                    text="فایل جدیدی نیست", fg="#10b981")
-
-        # چک بروزرسانی
-        self._check_update()
-
-    def _clear_update_card(self):
-        self.update_lbl.config(text="")
-        self.changelog_lbl.config(text="")
-        self.install_btn.config(state="disabled")
-
-    # ========================================================
-    # ارسال (مهندس)
-    # ========================================================
-    def _send_data(self):
-        if not messagebox.askyesno(
-            "تأیید",
-            "داده‌های جدیدت به دفتر ارسال بشه؟",
-        ):
-            return
-
-        self.send_btn.config(state="disabled", text="⏳ در حال ارسال...")
-        self.update()
-
-        ok, msg, count = sync.export_my_data(self.username)
-
-        self.send_btn.config(state="normal", text="📤 ارسال به دفتر")
-
-        if ok:
-            if count > 0:
-                messagebox.showinfo("موفق", f"✅ {msg}")
-            else:
-                messagebox.showinfo("اطلاع", msg)
-            self._refresh_all()
-        else:
-            messagebox.showerror("خطا", f"❌ {msg}")
-
-    # ========================================================
-    # دریافت (مدیر)
-    # ========================================================
-    def _recv_data(self):
-        pending = sync.get_pending_syncs()
-        if not pending:
-            messagebox.showinfo("اطلاع", "فایل جدیدی برای دریافت نیست")
-            return
-
-        if not messagebox.askyesno(
-            "تأیید",
-            f"{len(pending)} فایل دریافت و ادغام بشه؟",
-        ):
-            return
-
-        self.recv_btn.config(state="disabled", text="⏳ در حال دریافت...")
-        self.update()
-
-        ok, msg, count = sync.import_all_from_engineers()
-
-        self.recv_btn.config(state="normal", text="📥 دریافت از مهندسین")
-
-        if ok:
-            messagebox.showinfo("موفق", f"✅ {msg}")
-        else:
-            messagebox.showwarning("هشدار", msg)
-
-        self._refresh_all()
-
-    # ========================================================
-    # بروزرسانی
-    # ========================================================
-    def _check_update(self):
-        # نسخه فعلی
-        from electrocalc.config import constants as C
-        current = C.APP_VERSION
-
-        # نسخه سرور (اگه version.json باشه)
-        share = sync.get_share_path()
-        if not share:
-            return
-
-        version_file = share / "updates" / "version.json"
-        if not version_file.exists():
-            self.update_lbl.config(
-                text=f"نسخه فعلی: {current}  —  فایل version.json نیست",
-                fg="#6b7280")
-            self.install_btn.config(state="disabled")
-            return
-
+    def _inspect_repository(self):
         try:
-            import json
-            with open(version_file, encoding="utf-8") as f:
-                info = json.load(f)
+            repo = self._find_repository()
+            if repo is None:
+                self._events.put(("status", None, "", ""))
+                return
+            branch_result = subprocess.run(
+                ["git", "branch", "--show-current"], cwd=repo,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", check=False,
+            )
+            remote_result = subprocess.run(
+                ["git", "remote", "get-url", "origin"], cwd=repo,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", check=False,
+            )
+            branch = branch_result.stdout.strip() or "HEAD جداشده"
+            remote = remote_result.stdout.strip() if remote_result.returncode == 0 else ""
+            self._events.put(("status", str(repo), branch, remote))
+        except FileNotFoundError:
+            self._events.put(("status_error", "برنامه git در سیستم پیدا نشد."))
+        except Exception as exc:
+            self._events.put(("status_error", f"خطا در بررسی مخزن: {exc}"))
 
-            remote_v = info.get("version", "?")
-            changelog = info.get("changelog", [])
-            cl_text = "\n".join(f"• {c}" for c in changelog)
+    def _poll_events(self):
+        if self._destroyed:
+            return
+        try:
+            while True:
+                event = self._events.get_nowait()
+                if event[0] == "log":
+                    self._append_log(event[1])
+                elif event[0] == "status":
+                    _, repo, branch, remote = event
+                    self._repo_root = Path(repo) if repo else None
+                    connected = bool(repo and remote)
+                    color = self.palette["success"] if connected else self.palette["danger"]
+                    text = "مخزن متصل است" if connected else "مخزن گیت‌هاب تنظیم نشده است"
+                    self.status_label.config(text=text, fg=color)
+                    self.status_dot.config(fg=color)
+                    self.branch_label.config(text=f"شاخه: {branch or '—'}")
+                    self.remote_label.config(text=f"مخزن: {remote or 'origin تنظیم نشده'}")
+                    self._set_action_state()
+                elif event[0] == "status_error":
+                    self._repo_root = None
+                    self.status_label.config(text=event[1], fg=self.palette["danger"])
+                    self.status_dot.config(fg=self.palette["danger"])
+                    self.branch_label.config(text="شاخه: —")
+                    self.remote_label.config(text="مخزن: —")
+                    self._set_action_state()
+                elif event[0] == "done":
+                    self._busy = False
+                    self._set_action_state()
+                    self._refresh_status()
+        except queue.Empty:
+            pass
+        self._poll_job = self.after(100, self._poll_events)
 
-            if remote_v > current:
-                self.update_lbl.config(
-                    text=f"🆕 نسخه جدید موجوده!\n"
-                         f"فعلی: {current}  →  جدید: {remote_v}",
-                    fg="#f59e0b")
-                self.changelog_lbl.config(text=cl_text)
-                self.install_btn.config(state="normal")
+    def _append_log(self, text):
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"{text}\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _set_action_state(self):
+        state = "normal" if self._repo_root and not self._busy else "disabled"
+        self.pull_button.config(state=state)
+        self.push_button.config(state=state)
+
+    def _pull(self, automatic=False):
+        if not self._repo_root or self._busy:
+            return
+        label = "دریافت خودکار" if automatic else "دریافت از گیت‌هاب"
+        self._start_operation(label, [("git", "pull", "--ff-only")])
+
+    def _push(self):
+        if not self._repo_root or self._busy:
+            return
+        confirmed = messagebox.askyesno(
+            "تأیید ارسال",
+            "تمام تغییرات کاری، شامل فایل‌های جدید، stage و commit می‌شوند و به origin ارسال خواهند شد. ادامه می‌دهید؟",
+            parent=self,
+        )
+        if confirmed:
+            self._start_operation("ارسال به گیت‌هاب", "push")
+
+    def _start_operation(self, label, commands):
+        if self._busy:
+            return
+        self._busy = True
+        self._set_action_state()
+        self._events.put(("log", f"\n--- {label} ---"))
+        threading.Thread(
+            target=self._run_operation,
+            args=(commands,),
+            daemon=True,
+        ).start()
+
+    def _run_operation(self, commands):
+        try:
+            repo = self._repo_root
+            if isinstance(commands, str) and commands == "push":
+                if not self._run_git(repo, ["git", "add", "-A"]):
+                    return
+                staged = subprocess.run(
+                    ["git", "diff", "--cached", "--quiet"], cwd=repo,
+                    capture_output=True, check=False,
+                )
+                if staged.returncode == 1:
+                    if not self._run_git(
+                        repo, ["git", "commit", "-m", "Sync from ElectroCalc"]
+                    ):
+                        return
+                elif staged.returncode != 0:
+                    self._events.put(("log", "خطا در بررسی تغییرات stageشده."))
+                    return
+                else:
+                    self._events.put(("log", "تغییر جدیدی برای commit وجود ندارد."))
+
+                branch_result = subprocess.run(
+                    ["git", "branch", "--show-current"], cwd=repo,
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", check=False,
+                )
+                branch = branch_result.stdout.strip()
+                if not branch:
+                    self._events.put(("log", "ارسال ممکن نیست: شاخه فعالی انتخاب نشده است."))
+                    return
+                self._run_git(repo, ["git", "push", "-u", "origin", branch])
             else:
-                self.update_lbl.config(
-                    text=f"✅ به‌روز هستی — {current}",
-                    fg="#10b981")
-                self.changelog_lbl.config(text="")
-                self.install_btn.config(state="disabled")
+                for command in commands:
+                    if not self._run_git(repo, list(command)):
+                        break
+        except Exception as exc:
+            self._events.put(("log", f"خطا: {exc}"))
+        finally:
+            self._events.put(("done",))
 
-        except Exception as e:
-            self.update_lbl.config(
-                text=f"خطا در خواندن version.json: {e}",
-                fg="#ef4444")
-            self.install_btn.config(state="disabled")
+    def _run_git(self, repo, command):
+        self._events.put(("log", f"$ {' '.join(command)}"))
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            if process.stdout is not None:
+                for line in process.stdout:
+                    self._events.put(("log", line.rstrip()))
+            return_code = process.wait()
+        except FileNotFoundError:
+            self._events.put(("log", "خطا: برنامه git در سیستم پیدا نشد."))
+            return False
+        if return_code:
+            self._events.put(("log", f"فرمان با کد {return_code} ناموفق بود."))
+            return False
+        self._events.put(("log", "فرمان با موفقیت انجام شد."))
+        return True
 
-    def _install_update(self):
-        messagebox.showinfo(
-            "به‌زودی",
-            "نصب خودکار بروزرسانی فعلاً فعال نیست.\n"
-            "به‌زودی اضافه می‌شه.")
+    def _toggle_auto_sync(self):
+        if self.auto_sync_var.get():
+            self._append_log("دریافت خودکار هر ۶۰ ثانیه فعال شد.")
+            self._schedule_auto_sync()
+        else:
+            if self._auto_job is not None:
+                self.after_cancel(self._auto_job)
+                self._auto_job = None
+            self._append_log("دریافت خودکار غیرفعال شد.")
+
+    def _schedule_auto_sync(self):
+        if self._destroyed or not self.auto_sync_var.get():
+            return
+        self._auto_job = self.after(60_000, self._auto_sync_tick)
+
+    def _auto_sync_tick(self):
+        self._auto_job = None
+        if self.auto_sync_var.get():
+            if self._repo_root and not self._busy:
+                self._pull(automatic=True)
+            else:
+                self._append_log("دریافت خودکار رد شد؛ مخزن متصل نیست یا عملیات دیگری در جریان است.")
+            self._schedule_auto_sync()
+
+    def destroy(self):
+        self._destroyed = True
+        for job in (self._poll_job, self._auto_job):
+            if job is not None:
+                try:
+                    self.after_cancel(job)
+                except tk.TclError:
+                    pass
+        super().destroy()

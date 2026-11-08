@@ -3,6 +3,7 @@
 import sys
 import sqlite3
 from pathlib import Path
+from datetime import datetime
 
 
 # ========================================================
@@ -436,4 +437,36 @@ def init_db() -> None:
             pass
 
     conn.commit()
+
+    # Create a bootstrap administrator when the database has no active admin.
+    try:
+        cur.execute(
+            "SELECT 1 FROM users WHERE role = 'admin' AND active = 1 LIMIT 1"
+        )
+        if cur.fetchone() is None:
+            import bcrypt
+
+            password_hash = bcrypt.hashpw(
+                b"admin123", bcrypt.gensalt()
+            ).decode("utf-8")
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO users
+                    (username, password_hash, full_name, role, active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "admin",
+                    password_hash,
+                    "مدیر سیستم",
+                    "admin",
+                    1,
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"خطا در ساخت کاربر مدیر پیش‌فرض: {exc}")
+
     conn.close()

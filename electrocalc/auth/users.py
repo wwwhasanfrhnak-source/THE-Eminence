@@ -3,6 +3,8 @@
 import hashlib
 from datetime import datetime
 
+import bcrypt
+
 from electrocalc.data.database import get_connection
 
 
@@ -45,7 +47,14 @@ def login(username: str, password: str):
         return None
     if not user["active"]:
         return None
-    if user["password_hash"] != hash_password(password):
+    stored_hash = user["password_hash"]
+    if stored_hash.startswith(("$2a$", "$2b$", "$2y$")):
+        try:
+            if not bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
+                return None
+        except (ValueError, TypeError):
+            return None
+    elif stored_hash != hash_password(password):
         return None
     return user
 
