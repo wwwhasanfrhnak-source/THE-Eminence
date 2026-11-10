@@ -606,13 +606,31 @@ class MainWindow(TouchScrollable):
                 *profile_text.winfo_children(),
             ):
                 widget.bind("<Button-1>", lambda e: self._change_my_profile())
-
-        self._bell_label = action_label(
-            right,
-            "🔔",
-            self._show_notifications,
-            width=3,
-        )
+        # ==================== بارگذاری عکس news.png برای دکمه اعلان‌ها ====================
+        try:
+            from PIL import Image, ImageTk
+            import os
+            base_dir = r"C:\Users\H.R\Desktop\برنامه برق\ElectroCalc"
+            news_path = os.path.join(base_dir, "assets", "news.png")
+            news_img = Image.open(news_path).resize((28, 28), Image.LANCZOS)
+            self._news_icon = ImageTk.PhotoImage(news_img)
+            
+            self._bell_label = tk.Label(right, image=self._news_icon, bg=p["card"], cursor="hand2")
+            self._bell_label.pack(side="right", pady=12, padx=10)
+            self._bell_label.bind("<Button-1>", lambda e: self._show_notifications())
+            self._bell_label.bind("<Enter>", lambda e: self._bell_label.configure(bg=p["active_bg"]))
+            self._bell_label.bind("<Leave>", lambda e: self._bell_label.configure(bg=p["card"]))
+            
+        except Exception as e:
+            print(f"Error loading news.png: {e}")
+            # اگر عکس پیدا نشد، از زنگوله پیش‌فرض استفاده کن
+            self._bell_label = action_label(
+                right,
+                "🔔",
+                self._show_notifications,
+                width=3,
+            )
+        # ==============================================================================
         action_label(right, "⋯", self._show_header_menu, width=3)
 
         if self._has_timer_permission():

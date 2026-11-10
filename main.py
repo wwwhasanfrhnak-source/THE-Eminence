@@ -223,6 +223,7 @@ def main():
 
     if not user:
         return
+    # اگر user برگشت، خودکار برو به برنامه اصلی
 
     try:
         from electrocalc.ui.main_window import MainWindow
