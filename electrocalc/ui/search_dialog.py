@@ -1,8 +1,10 @@
 """پنجره جستجوی سراسری — Ctrl+K."""
 
+import os
 import tkinter as tk
 from tkinter import ttk
 from tkinter import StringVar
+from PIL import Image, ImageTk, ImageSequence
 
 from electrocalc.core import search as search_module
 
@@ -16,6 +18,9 @@ class SearchDialog:
         self.app = app
         self.win = None
         self._job = None
+        self._icon_frames = []
+        self._icon_index = 0
+        self._anim_job = None
 
     def show(self):
         if self.win and self.win.winfo_exists():
@@ -105,32 +110,80 @@ class SearchDialog:
                  bg=p["bg"], fg=p["muted"]).pack(pady=(0, 10))
 
         self.win.bind("<Escape>", lambda e: self.win.destroy())
+        self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # نمایش اولیه
         self._show_hint()
+
+    def _on_close(self):
+        if self._anim_job:
+            try:
+                self.win.after_cancel(self._anim_job)
+            except Exception:
+                pass
+        self.win.destroy()
 
     def _show_hint(self):
         p = self.palette
         for w in self.results_inner.winfo_children():
             w.destroy()
-        tk.Label(self.results_inner,
-                 text="✏️  شروع به تایپ کن...",
-                 font=("Segoe UI", 11),
-                 bg=p["bg"], fg=p["muted"],
-                 pady=40).pack()
+        
+        hint_frame = tk.Frame(self.results_inner, bg=p["bg"])
+        hint_frame.pack(pady=40)
+
+        # ۱. لود کردن عکس متحرک بزرگ‌تر (48x48)
+        try:
+            base_dir = os.getcwd()
+            icon_path = os.path.join(base_dir, "assets", "Searching_20261113211851.gif")
+            img = Image.open(icon_path)
+            self._icon_frames = []
+            for frame in ImageSequence.Iterator(img):
+                frame_img = frame.convert("RGBA").resize((48, 48), Image.LANCZOS) # سایز بزرگتر
+                self._icon_frames.append(ImageTk.PhotoImage(frame_img))
+            
+            if self._icon_frames:
+                self.hint_icon = tk.Label(hint_frame, bg=p["bg"])
+                self.hint_icon.pack(side="right", padx=(10, 0))
+                self._icon_index = 0
+                self._animate_hint()
+        except Exception as e:
+            print(f"Hint Icon Error: {e}")
+
+        # ۲. متن راهنما
+        tk.Label(hint_frame,
+                 text="شروع به تایپ کن...",
+                 font=("Segoe UI", 12),
+                 bg=p["bg"], fg=p["muted"]).pack(side="right")
+
+    def _animate_hint(self):
+        if not self._icon_frames or not hasattr(self, 'hint_icon'):
+            return
+        try:
+            self.hint_icon.configure(image=self._icon_frames[self._icon_index])
+            self._icon_index = (self._icon_index + 1) % len(self._icon_frames)
+            self._anim_job = self.hint_icon.after(80, self._animate_hint)
+        except Exception:
+            pass
 
     def _schedule_search(self):
-        """با تاخیر کوتاه جستجو کن."""
         if self._job:
             try:
                 self.win.after_cancel(self._job)
             except Exception:
                 pass
-        self._job = self.win.after(250, self._do_search)
+        # زمان انتظار از 250 به 100 کاهش یافت تا جستجو سریع‌تر انجام شود
+        self._job = self.win.after(100, self._do_search)
 
     def _do_search(self):
         query = self.query_var.get().strip()
         p = self.palette
+
+        if self._anim_job:
+            try:
+                self.win.after_cancel(self._anim_job)
+                self._anim_job = None
+            except Exception:
+                pass
 
         for w in self.results_inner.winfo_children():
             w.destroy()
@@ -168,19 +221,14 @@ class SearchDialog:
             self._add_category(category, items, p)
 
     def _add_category(self, category, items, p):
-        # عنوان دسته
         cat_frame = tk.Frame(self.results_inner, bg=p["bg"])
         cat_frame.pack(fill="x", pady=(10, 4))
-
         tk.Label(cat_frame, text=f"{category}  ({len(items)})",
                  font=("Segoe UI", 11, "bold"),
                  bg=p["bg"], fg=p["accent"],
                  anchor="e").pack(anchor="e", padx=5)
-
-        # جداکننده
         tk.Frame(self.results_inner, bg=p["border"], height=1).pack(
             fill="x", padx=5, pady=(0, 6))
-
         for item in items:
             self._add_result_row(item, category, p)
 
@@ -190,15 +238,12 @@ class SearchDialog:
                         highlightbackground=p["border"],
                         highlightthickness=1)
         row.pack(fill="x", padx=5, pady=2)
-
         body = tk.Frame(row, bg=p["card"])
         body.pack(fill="both", expand=True, padx=12, pady=8)
-
         tk.Label(body, text=item["title"],
                  font=("Segoe UI", 10, "bold"),
                  bg=p["card"], fg=p["text"],
                  anchor="e").pack(anchor="e", fill="x")
-
         if item["subtitle"]:
             tk.Label(body, text=item["subtitle"],
                      font=("Segoe UI", 8),
@@ -226,7 +271,6 @@ class SearchDialog:
             w.bind("<Leave>", on_leave)
 
     def _go_to(self, category, item):
-        """رفتن به تب مربوطه."""
         tab_map = {
             "📁 پروژه‌ها": "پروژه‌ها",
             "👥 کاربران": "کاربران",

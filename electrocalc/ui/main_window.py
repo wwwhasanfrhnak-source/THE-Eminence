@@ -6,6 +6,7 @@ import tkinter.font as tkfont
 import traceback
 from tkinter import ttk, messagebox
 from pathlib import Path
+from PIL import Image, ImageTk, ImageSequence
 
 from electrocalc.config import constants as C
 from electrocalc.config import themes as themes_module
@@ -171,7 +172,6 @@ class MainWindow(TouchScrollable):
         self.scroll_mode = get_scroll_mode()
         self.scroll_speed = get_scroll_speed()
 
-        # پراپرتی‌های مهم برای جلوگیری از AttributeError
         self.pages = []
         self.sidebar_buttons = []
         self._tab_classes = {}
@@ -191,13 +191,15 @@ class MainWindow(TouchScrollable):
         self._page_title_label = None
         self._page_subtitle_label = None
 
-        # ویجت‌های هدر
         self._toggle_sidebar_btn = None
         self._change_btn = None
         self._proj_label = None
         self._timer_label = None
         self.status_var = None
-        self._refresh_job = None
+
+        self._menu_img = None
+        self._search_img = None
+        self._news_icon = None
 
         try:
             from electrocalc.core import settings as st
@@ -265,7 +267,6 @@ class MainWindow(TouchScrollable):
             except tk.TclError:
                 continue
 
-    # ========================================================
     def _has_timer_permission(self):
         if not self.current_user:
             return False
@@ -471,9 +472,6 @@ class MainWindow(TouchScrollable):
             pady=5,
         ).pack(side="left", anchor="n", pady=6)
 
-    # ========================================================
-    # هدر
-    # ========================================================
     def _build_header(self):
         p = self.palette
         h = tk.Frame(self.root, height=76, bg=p["card"])
@@ -485,7 +483,7 @@ class MainWindow(TouchScrollable):
 
         self._toggle_sidebar_btn = tk.Label(
             left,
-            text="☰",
+            text="",
             bg=p["card"],
             fg=p["muted"],
             font=(self.font_family, 17, "bold"),
@@ -501,6 +499,17 @@ class MainWindow(TouchScrollable):
         self._toggle_sidebar_btn.bind(
             "<Leave>", lambda e: self._toggle_sidebar_btn.config(bg=p["card"])
         )
+
+        try:
+            base_dir = os.getcwd()
+            img = Image.open(os.path.join(base_dir, "assets", "arrow_20261113205622.gif"))
+            img.seek(0)
+            img = img.convert("RGBA").resize((24, 24), Image.LANCZOS)
+            self._menu_img = ImageTk.PhotoImage(img)
+            self._toggle_sidebar_btn.configure(image=self._menu_img)
+        except Exception as e:
+            print(f"Menu Icon Error: {e}")
+            self._toggle_sidebar_btn.configure(text="☰")
 
         brand = tk.Frame(left, bg=p["card"])
         brand.pack(side="left", pady=12)
@@ -556,12 +565,10 @@ class MainWindow(TouchScrollable):
             return widget
 
         if self.current_user:
-            # ============ تغییر ۱: پشتیبانی از dict و sqlite3.Row ============
             try:
                 un = self.current_user.get("full_name") or self.current_user["username"]
             except AttributeError:
                 un = self.current_user["full_name"] or self.current_user["username"]
-            # ==================================================================
             role = {"admin": "مدیر", "engineer": "مهندس", "viewer": "ناظر"}.get(self.current_user["role"], "")
             profile = tk.Frame(right, bg=p["card"], cursor="hand2")
             profile.pack(side="right", padx=(8, 0), pady=10)
@@ -606,31 +613,21 @@ class MainWindow(TouchScrollable):
                 *profile_text.winfo_children(),
             ):
                 widget.bind("<Button-1>", lambda e: self._change_my_profile())
-        # ==================== بارگذاری عکس news.png برای دکمه اعلان‌ها ====================
+
         try:
-            from PIL import Image, ImageTk
-            import os
-            base_dir = r"C:\Users\H.R\Desktop\برنامه برق\ElectroCalc"
+            base_dir = os.getcwd()
             news_path = os.path.join(base_dir, "assets", "news.png")
-            news_img = Image.open(news_path).resize((28, 28), Image.LANCZOS)
-            self._news_icon = ImageTk.PhotoImage(news_img)
-            
+            img = Image.open(news_path).convert("RGBA").resize((24, 24), Image.LANCZOS)
+            self._news_icon = ImageTk.PhotoImage(img)
             self._bell_label = tk.Label(right, image=self._news_icon, bg=p["card"], cursor="hand2")
             self._bell_label.pack(side="right", pady=12, padx=10)
             self._bell_label.bind("<Button-1>", lambda e: self._show_notifications())
             self._bell_label.bind("<Enter>", lambda e: self._bell_label.configure(bg=p["active_bg"]))
             self._bell_label.bind("<Leave>", lambda e: self._bell_label.configure(bg=p["card"]))
-            
         except Exception as e:
-            print(f"Error loading news.png: {e}")
-            # اگر عکس پیدا نشد، از زنگوله پیش‌فرض استفاده کن
-            self._bell_label = action_label(
-                right,
-                "🔔",
-                self._show_notifications,
-                width=3,
-            )
-        # ==============================================================================
+            print(f"News Icon Error: {e}")
+            self._bell_label = action_label(right, "🔔", self._show_notifications, width=3)
+
         action_label(right, "⋯", self._show_header_menu, width=3)
 
         if self._has_timer_permission():
@@ -701,7 +698,7 @@ class MainWindow(TouchScrollable):
         search_hint.pack(side="right", fill="x", expand=True)
         search_icon = tk.Label(
             search_frame,
-            text="🔍",
+            text="",
             bg=p["bg"],
             fg=p["accent"],
             font=(self.font_family, 12),
@@ -709,6 +706,17 @@ class MainWindow(TouchScrollable):
             padx=10,
         )
         search_icon.pack(side="right")
+
+        try:
+            base_dir = os.getcwd()
+            search_path = os.path.join(base_dir, "assets", "loupe.png")
+            img = Image.open(search_path).convert("RGBA").resize((20, 20), Image.LANCZOS)
+            self._search_img = ImageTk.PhotoImage(img)
+            search_icon.configure(image=self._search_img)
+        except Exception as e:
+            print(f"Search Icon Error: {e}")
+            search_icon.configure(text="🔍")
+
         for widget in (search_frame, search_hint, search_icon):
             widget.bind("<Button-1>", lambda e: self._show_search())
         search_frame.bind("<Enter>", lambda e: search_frame.config(bg=p["active_bg"]))
@@ -738,9 +746,6 @@ class MainWindow(TouchScrollable):
         finally:
             menu.grab_release()
 
-    # ========================================================
-    # نوار کناری
-    # ========================================================
     def _build_sidebar(self, parent):
         collapsed = self._sidebar_collapsed
         width = 72 if collapsed else 248
@@ -884,9 +889,6 @@ class MainWindow(TouchScrollable):
                 font=(self.font_family, 8),
             ).pack()
 
-    # ========================================================
-    # تب‌های مشترک
-    # ========================================================
     def _get_common_items(self, icons):
         return [
             (icons["home"], "خانه", "electrocalc.ui.tabs.home_tab", "HomeTab"),
@@ -947,9 +949,6 @@ class MainWindow(TouchScrollable):
         else:
             return common
 
-    # ========================================================
-    # Lazy Loading
-    # ========================================================
     def _create_tabs(self):
         items = self._get_items()
         self.pages = []
@@ -1042,9 +1041,6 @@ class MainWindow(TouchScrollable):
             justify="right",
         ).pack(side="right", padx=15)
 
-    # ========================================================
-    # خروجی PDF/Excel
-    # ========================================================
     def _find_treeview(self, widget):
         try:
             if widget.winfo_class() == "Treeview":
@@ -1145,9 +1141,6 @@ class MainWindow(TouchScrollable):
             traceback.print_exc()
             messagebox.showerror("خطا", str(e))
 
-    # ========================================================
-    # جستجو
-    # ========================================================
     def _show_search(self):
         from electrocalc.ui.search_dialog import SearchDialog
         dlg = SearchDialog(self.root, self.palette, self)
@@ -1159,9 +1152,6 @@ class MainWindow(TouchScrollable):
                 self._select_page(idx)
                 return
 
-    # ========================================================
-    # اعلان‌ها
-    # ========================================================
     def _show_notifications(self):
         if not self.current_user:
             return
@@ -1199,9 +1189,6 @@ class MainWindow(TouchScrollable):
 
         self.root.after(2000, check)
 
-    # ========================================================
-    # تم
-    # ========================================================
     def _show_theme_menu(self):
         menu = tk.Menu(
             self.root,
@@ -1288,9 +1275,6 @@ class MainWindow(TouchScrollable):
 
         log.info("UI بازسازی شد")
 
-    # ========================================================
-    # تایمر
-    # ========================================================
     def _start_session_timer(self):
         if not self.current_user:
             return
@@ -1333,9 +1317,6 @@ class MainWindow(TouchScrollable):
         finally:
             self._session_id = None
 
-    # ========================================================
-    # تغییر پروژه
-    # ========================================================
     def _change_project(self):
         from electrocalc.core import projects as proj
 
@@ -1435,9 +1416,6 @@ class MainWindow(TouchScrollable):
         win.bind("<Return>", lambda e: do_change())
         win.bind("<Escape>", lambda e: do_cancel())
 
-    # ========================================================
-    # چک فعال بودن
-    # ========================================================
     def _start_active_check(self):
         if not self.current_user:
             return
@@ -1452,9 +1430,7 @@ class MainWindow(TouchScrollable):
                     messagebox.showerror("دسترسی قطع شد", "حساب کاربری شما توسط مدیر غیرفعال شد.")
                     self.root.destroy()
                     return
-                # ============ تغییر ۲: تبدیل به dict ============
                 self.current_user = dict(u)
-                # ==============================================
             except Exception as e:
                 log.error(f"خطا در چک فعال بودن: {e}")
 
@@ -1462,27 +1438,6 @@ class MainWindow(TouchScrollable):
                 self._check_job = self.root.after(30000, check)
 
         self._check_job = self.root.after(30000, check)
-
-    # ========================================================
-    # نمایش صفحه
-    # ========================================================
-
-    def _start_auto_refresh(self):
-        if getattr(self, "_refresh_job", None):
-            try:
-                self.root.after_cancel(self._refresh_job)
-            except Exception:
-                pass
-        def auto_refresh_loop():
-            if self.current_page >= 0 and self.current_page < len(self.pages):
-                page = self.pages[self.current_page]
-                if hasattr(page, "refresh") and callable(getattr(page, "refresh")):
-                    try:
-                        page.refresh()
-                    except Exception as e:
-                        print(f"Auto-refresh error: {e}")
-            self._refresh_job = self.root.after(2000, auto_refresh_loop)
-        self._refresh_job = self.root.after(2000, auto_refresh_loop)
 
     def _select_page(self, idx):
         if idx < 0 or idx >= len(self.pages) or idx == self.current_page:
@@ -1502,7 +1457,6 @@ class MainWindow(TouchScrollable):
             self.pages[idx].pack(fill="both", expand=True)
             self.sidebar_buttons[idx].set_active(True)
             self.current_page = idx
-            self._start_auto_refresh()
             title = self._tab_classes[idx][0]
             self._page_title_label.config(text=title)
             self._page_subtitle_label.config(
@@ -1511,9 +1465,6 @@ class MainWindow(TouchScrollable):
         except Exception as e:
             log.error(f"خطا در نمایش صفحه {idx}: {e}")
 
-    # ========================================================
-    # رمز و پروفایل
-    # ========================================================
     def _change_my_password(self):
         if not self.current_user:
             return

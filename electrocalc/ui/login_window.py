@@ -77,8 +77,8 @@ class LoginWindow:
         self.enter_btn.bind("<Button-1>", lambda e: self._login())
         
         # بارگذاری عکس PNG
-        base_dir = r"C:\Users\H.R\Desktop\برنامه برق\ElectroCalc"
-        png_path = os.path.join(base_dir, "assets", "enter_anim.png")
+        base_dir = r"C:\Users\Hasan_farahnak\Desktop\برنامه برق\ElectroCalc"
+        png_path = os.path.join(base_dir, "enter_anim.png")
         try:
             img = Image.open(png_path)
             img = img.resize((45, 45), Image.LANCZOS)
@@ -164,7 +164,7 @@ class LoginWindow:
 
     def _show_anim(self, gif_name):
         self.anim_label.configure(image="")
-        base_dir = r"C:\Users\H.R\Desktop\برنامه برق\ElectroCalc"
+        base_dir = r"C:\Users\Hasan_farahnak\Desktop\برنامه برق\ElectroCalc"
         gif_path = os.path.join(base_dir, "assets", gif_name)
         try:
             img = Image.open(gif_path)
