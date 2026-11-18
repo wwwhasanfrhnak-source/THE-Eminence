@@ -234,6 +234,9 @@ jobs:
           "$ADB" shell input tap 160 585 >/dev/null 2>&1 || true
           sleep 8
           timeout 60 "$ADB" exec-out screencap -p > login-attempt.png || true
+          "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
+          sleep 2
+          timeout 60 "$ADB" exec-out screencap -p > login-error.png || true
 
           timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
           timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
@@ -277,6 +280,7 @@ jobs:
             emulator-relaunch.png
             login-attempt.png
             login-filled.png
+            login-error.png
             focus.txt
             relaunch.txt
             pid-relaunch.txt
