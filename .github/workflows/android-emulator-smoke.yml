@@ -47,6 +47,7 @@ jobs:
             autoconf automake libtool libtool-bin pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
             cmake libffi-dev libssl-dev libltdl-dev \
+            libpulse0 libxcb1 libx11-6 libxkbcommon0 \
             git zip unzip openssl
 
       - name: Install Buildozer
@@ -103,29 +104,69 @@ jobs:
           buildozer -v android debug 2>&1 | tee ../buildozer-emulator.log
 
       - name: Install and launch on emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          force-avd-creation: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
-          disable-animations: true
-          script: |
-            set -uo pipefail
-            APK=$(find mobile_app/bin -maxdepth 1 -name '*-x86_64-debug.apk' -type f | head -n 1)
-            echo "apk=$APK"
-            adb wait-for-device
-            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
-            adb install -r "$APK" 2>&1 | tee install.txt
-            adb shell monkey -p com.electrocalc.app -c android.intent.category.LAUNCHER 1 2>&1 | tee launch.txt || true
-            sleep 45
-            adb shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt
-            adb shell dumpsys activity activities > activities.txt 2>&1 || true
-            adb logcat -d > logcat.txt 2>&1 || true
-            adb exec-out screencap -p > emulator-startup.png || true
-            ls -l emulator-startup.png 2>/dev/null || true
-            test -s pid.txt
+        env:
+          ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
+          ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
+        run: |
+          set -uxo pipefail
+          SDK="$ANDROID_SDK_ROOT"
+          ADB="$SDK/platform-tools/adb"
+
+          {
+            echo "--- disk ---"; df -h / /home || true
+            echo "--- kvm ---"; ls -l /dev/kvm || true
+            echo "--- sdk ---"; ls "$SDK" || true
+            echo "--- ndk size ---"; du -sh "$HOME"/.buildozer/android/platform/android-ndk-* 2>/dev/null || true
+          } 2>&1 | tee environment.txt
+
+          # Reclaim NDK space; the emulator build no longer needs it.
+          rm -rf "$HOME"/.buildozer/android/platform/android-ndk-* || true
+
+          curl -sSLo /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf /tmp/cmdline-tools "$SDK/cmdline-tools/latest"
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          mkdir -p "$SDK/cmdline-tools"
+          mv /tmp/cmdline-tools/cmdline-tools "$SDK/cmdline-tools/latest"
+          SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          AVDM="$SDK/cmdline-tools/latest/bin/avdmanager"
+
+          yes | "$SDKM" --sdk_root="$SDK" --licenses > licenses.txt 2>&1 || true
+          "$SDKM" --sdk_root="$SDK" "platform-tools" "emulator" \
+            "platforms;android-30" "system-images;android-30;google_apis;x86_64" \
+            2>&1 | tail -n 40 | tee sdkmanager.txt
+
+          echo no | "$AVDM" --sdk_root="$SDK" create avd -n smoke30 \
+            -k "system-images;android-30;google_apis;x86_64" --force \
+            2>&1 | tee avdmanager.txt
+
+          "$SDK/emulator/emulator" -avd smoke30 -no-window -gpu swiftshader_indirect \
+            -noaudio -no-boot-anim -no-snapshot -camera-back none -no-metrics \
+            > emulator.log 2>&1 &
+          EMULATOR_PID=$!
+          echo "emulator pid $EMULATOR_PID"
+
+          BOOTED=0
+          for _ in $(seq 1 120); do
+            STATE=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            if [ "$STATE" = "1" ]; then BOOTED=1; break; fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then echo "emulator exited early"; break; fi
+            sleep 5
+          done
+          "$ADB" devices -l | tee devices.txt
+          echo "booted=$BOOTED" | tee boot.txt
+
+          APK=$(find mobile_app/bin -maxdepth 1 -name '*-x86_64-debug.apk' -type f | head -n 1)
+          echo "apk=$APK" | tee apk.txt
+          "$ADB" install -r "$APK" 2>&1 | tee install.txt
+          "$ADB" shell monkey -p com.electrocalc.app -c android.intent.category.LAUNCHER 1 2>&1 | tee launch.txt || true
+          sleep 45
+          "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt
+          "$ADB" shell dumpsys activity activities > activities.txt 2>&1 || true
+          "$ADB" logcat -d > logcat.txt 2>&1 || true
+          "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
+          "$ADB" exec-out screencap -p > emulator-startup.png || true
+          ls -l emulator-startup.png 2>/dev/null || true
+          test -s pid.txt
 
       - name: Upload emulator evidence
         if: always()
@@ -133,12 +174,21 @@ jobs:
         with:
           name: emulator-smoke-evidence
           path: |
+            environment.txt
+            devices.txt
+            boot.txt
+            apk.txt
+            licenses.txt
+            sdkmanager.txt
+            avdmanager.txt
+            emulator.log
             emulator-startup.png
             install.txt
             launch.txt
             pid.txt
             activities.txt
             logcat.txt
+            logcat-crash.txt
             buildozer-emulator.log
             mobile_app/bin/*.apk
           if-no-files-found: warn
