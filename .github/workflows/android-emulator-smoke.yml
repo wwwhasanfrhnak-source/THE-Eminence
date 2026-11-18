@@ -218,9 +218,23 @@ jobs:
           "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid-relaunch.txt || true
           timeout 60 "$ADB" exec-out screencap -p > emulator-relaunch.png || true
 
+          # Drive the login form once: empty DB means local auth must reject
+          # this attempt without blocking the UI thread.
+          "$ADB" shell input tap 160 330 >/dev/null 2>&1 || true
+          sleep 1
+          "$ADB" shell input text "admin" >/dev/null 2>&1 || true
+          "$ADB" shell input tap 160 400 >/dev/null 2>&1 || true
+          sleep 1
+          "$ADB" shell input text "invalid-pass" >/dev/null 2>&1 || true
+          "$ADB" shell input keyevent 111 >/dev/null 2>&1 || true
+          sleep 1
+          "$ADB" shell input tap 160 585 >/dev/null 2>&1 || true
+          sleep 8
+          timeout 60 "$ADB" exec-out screencap -p > login-attempt.png || true
+
           timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
           timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
-          ls -l emulator-startup.png emulator-relaunch.png 2>/dev/null || true
+          ls -l emulator-startup.png emulator-relaunch.png login-attempt.png 2>/dev/null || true
           test -s pid.txt
 
       - name: Publish diagnostics
@@ -258,6 +272,7 @@ jobs:
             emulator-startup.png
             splash-check.png
             emulator-relaunch.png
+            login-attempt.png
             focus.txt
             relaunch.txt
             pid-relaunch.txt
