@@ -108,7 +108,9 @@ class LoginScreen(MDScreen):
             halign="right",
             font_name="Vazirmatn",
             line_color_focus=colors.get("accent"),
-            helper_text=rtl("مثال: 192.168.1.20:8080 — خالی = آفلاین"),
+            helper_text=rtl(
+                "مثال: https://192.168.1.20 — خالی = آفلاین"
+            ),
             helper_text_mode="on_focus",
             size_hint_y=None,
             height="54dp",

@@ -1,0 +1,288 @@
+name: Android Release APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-build
+    paths:
+      - "mobile_app/**"
+      - ".github/workflows/android-release.yml"
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build signed ElectroCalc release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify bundled database has no personal data
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          db = Path("mobile_app/assets/electrocalc.db")
+          assert db.is_file(), f"missing bundled database: {db}"
+          connection = sqlite3.connect(str(db))
+          try:
+              users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+              sessions = connection.execute(
+                  "SELECT COUNT(*) FROM user_sessions"
+              ).fetchone()[0] if connection.execute(
+                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_sessions'"
+              ).fetchone() else 0
+          finally:
+              connection.close()
+          print(f"bundled users={users} sessions={sessions}")
+          assert users == 0, "refusing to publish a database containing users"
+          assert sessions == 0, "refusing to publish a database containing sessions"
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake libtool libtool-bin pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
+            cmake libffi-dev libssl-dev libltdl-dev \
+            git zip unzip openssl
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install buildozer==1.5.0 cython==0.29.36
+
+      - name: Patch Buildozer manifest-argument quoting
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          import buildozer.targets.android as target
+
+          path = Path(target.__file__)
+          text = path.read_text(encoding="utf-8")
+          text, escapes = re.subn(
+              r"\.replace\('\"', '\\\\\"'\)", "", text
+          )
+          text, quoting = re.subn(
+              r"--extra-manifest-application-arguments=\"\{\}\"",
+              "--extra-manifest-application-arguments={}",
+              text,
+          )
+          assert escapes == 1, f"quoting escape patch failed: {escapes}"
+          assert quoting == 1, f"argument quoting patch failed: {quoting}"
+          path.write_text(text, encoding="utf-8")
+          print(f"patched {path}")
+          PY
+
+      - name: Prepare release keystore and export
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          KEYSTORE="$RUNNER_TEMP/release.keystore"
+          ALIAS="${KEY_ALIAS:-electrocalc}"
+
+          if [ -n "${KEYSTORE_B64}" ]; then
+            printf '%s' "${KEYSTORE_B64}" | base64 -d > "${KEYSTORE}"
+            test -s "${KEYSTORE}"
+            PASS="${KEYSTORE_PASSWORD}"
+            echo "::add-mask::${PASS}"
+            echo "using repository release keystore"
+          else
+            PASS=$(openssl rand -hex 32)
+            echo "::add-mask::${PASS}"
+            keytool -genkeypair \
+              -keystore "${KEYSTORE}" \
+              -storetype PKCS12 \
+              -alias "${ALIAS}" \
+              -keyalg RSA \
+              -keysize 4096 \
+              -validity 10000 \
+              -storepass "${PASS}" \
+              -keypass "${PASS}" \
+              -dname "CN=ElectroCalc Release, OU=Mobile, O=ElectroCalc, L=Tehran, C=IR"
+            printf '%s' "${PASS}" > "$RUNNER_TEMP/release-password.txt"
+            printf '%s' "${ALIAS}" > "$RUNNER_TEMP/release-alias.txt"
+            tar -czf "$RUNNER_TEMP/release-key-bundle.tar.gz" \
+              -C "$RUNNER_TEMP" \
+              release.keystore release-password.txt release-alias.txt
+            # RSA-OAEP/SHA-256 can only wrap a few hundred bytes, so the bundle
+            # is encrypted with a one-time AES-256-CTR key that is itself
+            # wrapped with the export public key.
+            openssl rand -hex 32 > "$RUNNER_TEMP/release-sym.txt"
+            openssl enc -aes-256-ctr -pbkdf2 -salt \
+              -pass "file:$RUNNER_TEMP/release-sym.txt" \
+              -in "$RUNNER_TEMP/release-key-bundle.tar.gz" \
+              -out artifact/release-keystore.enc
+            openssl pkeyutl -encrypt \
+              -pubin -inkey mobile_app/ci/release_export_public.pem \
+              -pkeyopt rsa_padding_mode:oaep \
+              -pkeyopt rsa_oaep_md:sha256 \
+              -pkeyopt rsa_mgf1_md:sha256 \
+              -in "$RUNNER_TEMP/release-sym.txt" \
+              -out artifact/release-keystore.key.enc
+            echo "generated a new release keystore and encrypted its export"
+          fi
+
+          {
+            echo "P4A_RELEASE_KEYSTORE=${KEYSTORE}"
+            echo "P4A_RELEASE_KEYSTORE_PASSWD=${PASS}"
+            echo "P4A_RELEASE_KEYALIAS=${ALIAS}"
+            echo "P4A_RELEASE_KEYALIAS_PASSWD=${PASS}"
+          } >> "$GITHUB_ENV"
+
+      - name: Cache Buildozer toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            mobile_app/.buildozer
+          key: buildozer-release-${{ runner.os }}-p4a-v2024.01.21-v2-${{ hashFiles('mobile_app/buildozer.spec') }}
+          restore-keys: |
+            buildozer-release-${{ runner.os }}-p4a-v2024.01.21-v2-
+            buildozer-${{ runner.os }}-p4a-v2024.01.21-v2-
+
+      - name: Reset cached Android build tree
+        run: rm -rf mobile_app/.buildozer
+
+      - name: Build release APK
+        working-directory: mobile_app
+        env:
+          BUILDOZER_WARN_ON_ROOT: "0"
+        run: |
+          set -o pipefail
+          buildozer -v android release 2>&1 | tee ../buildozer-release.log
+
+      - name: Locate and rename release APK
+        run: |
+          set -euo pipefail
+          APK=$(find mobile_app/bin -maxdepth 1 -name '*-release.apk' -type f | head -n 1)
+          if [ -z "${APK}" ]; then
+            echo "signed release APK not found"
+            ls -lh mobile_app/bin || true
+            exit 1
+          fi
+          cp "${APK}" artifact/ElectroCalc-v1.0.0-release.apk
+          ls -lh artifact/ElectroCalc-v1.0.0-release.apk
+
+      - name: Verify release APK
+        run: |
+          set -euo pipefail
+          APK=artifact/ElectroCalc-v1.0.0-release.apk
+          BUILD_TOOLS=$(find "$HOME/.buildozer/android/platform/android-sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          test -n "$BUILD_TOOLS"
+
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -E "^(package:|sdkVersion:|targetSdkVersion:|native-code:)"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+
+          if "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -q "application-debuggable"; then
+            echo "release manifest is debuggable"
+            exit 1
+          fi
+
+          CLEARTEXT_COUNT=$("$BUILD_TOOLS/aapt" dump xmltree "$APK" AndroidManifest.xml | grep -c "usesCleartextTraffic" || true)
+          test "${CLEARTEXT_COUNT}" -ge 1
+
+          python3 - <<'PY'
+          import io
+          import os
+          import sqlite3
+          import tarfile
+          import tempfile
+          import zipfile
+
+          apk = "artifact/ElectroCalc-v1.0.0-release.apk"
+          with zipfile.ZipFile(apk) as archive:
+              bundle = archive.read("assets/private.tar")
+          with tarfile.open(fileobj=io.BytesIO(bundle)) as tar:
+              names = tar.getnames()
+              database = tar.extractfile("assets/electrocalc.db").read()
+          forbidden = [n for n in names if n.endswith((".pem", ".keystore", ".jks", ".env"))]
+          assert not forbidden, f"secret-like files in APK: {forbidden}"
+          handle, path = tempfile.mkstemp(suffix=".db")
+          os.close(handle)
+          try:
+              with open(path, "wb") as output:
+                  output.write(database)
+              connection = sqlite3.connect(path)
+              try:
+                  tables = [
+                      row[0] for row in connection.execute(
+                          "SELECT name FROM sqlite_master WHERE type='table' "
+                          "AND name NOT LIKE 'sqlite_%'"
+                      )
+                  ]
+                  users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                  total = sum(
+                      connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                      for table in tables
+                  )
+              finally:
+                  connection.close()
+          finally:
+              os.unlink(path)
+          print(f"bundled tables={len(tables)} users={users} rows={total}")
+          assert users == 0, "release database contains users"
+          assert total == 0, "release database contains data"
+          PY
+
+          CERT=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tr -d '\r')
+          printf '%s\n' "$CERT"
+          if printf '%s' "$CERT" | grep -q "CN=Android Debug"; then
+            echo "refusing to publish a debug-signed release"
+            exit 1
+          fi
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ElectroCalc-v1.0.0-release-apk
+          path: artifact/ElectroCalc-v1.0.0-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload encrypted keystore export
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-keystore-encrypted
+          path: |
+            artifact/release-keystore.enc
+            artifact/release-keystore.key.enc
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload release build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-release-log
+          path: buildozer-release.log
+          if-no-files-found: warn
+          retention-days: 7

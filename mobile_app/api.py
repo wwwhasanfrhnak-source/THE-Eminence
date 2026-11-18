@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import ssl
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 TIMEOUT_SECONDS = 8
@@ -37,16 +39,56 @@ def _app_dir():
     return path
 
 
+def _cleartext_host_allowed(host):
+    host = (host or "").strip().strip(".").lower()
+    if not host:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        # Single-label hostnames are only resolvable inside the LAN.
+        return "." not in host
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+    )
+
+
 def normalize_server(server):
     value = str(server or "").strip()
     if not value:
         raise ApiError("آدرس سرور را وارد کنید.")
     if "://" not in value:
         value = "http://" + value
-    scheme = value.split("://", 1)[0].lower()
+    parts = urlsplit(value)
+    scheme = parts.scheme.lower()
     if scheme not in ("http", "https"):
         raise ApiError("آدرس سرور باید http یا https باشد.")
+    if not parts.hostname:
+        raise ApiError("آدرس سرور معتبر نیست.")
+    if scheme == "http" and not _cleartext_host_allowed(parts.hostname):
+        raise ApiError(
+            "ارتباط بدون رمزنگاری فقط برای شبکه محلی مجاز است؛ "
+            "برای این سرور از https استفاده کنید."
+        )
     return value.rstrip("/")
+
+
+def _tls_context():
+    try:
+        import certifi
+
+        context = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        context = ssl.create_default_context()
+    try:
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+    except (AttributeError, ValueError):
+        pass
+    return context
 
 
 def device_identity():
@@ -95,8 +137,11 @@ def _request(server, method, path, payload=None, token=None):
         headers["Authorization"] = f"Bearer {token}"
     url = normalize_server(server) + path
     request = Request(url, data=body, headers=headers, method=method)
+    context = _tls_context() if url.lower().startswith("https://") else None
     try:
-        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with urlopen(
+            request, timeout=TIMEOUT_SECONDS, context=context
+        ) as response:
             data = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         try:
@@ -161,14 +206,32 @@ def delta(server, token, since=""):
 
 
 def save_session(session):
-    _write_json(_app_dir() / SESSION_FILE, session)
+    path = _app_dir() / SESSION_FILE
+    payload = json.dumps(session, ensure_ascii=False).encode("utf-8")
+    try:
+        import secure_store
+
+        if secure_store.write_encrypted(path, payload):
+            return
+    except Exception:
+        pass
+    _write_json(path, session)
 
 
 def load_session():
+    path = _app_dir() / SESSION_FILE
     try:
-        data = json.loads(
-            (_app_dir() / SESSION_FILE).read_text(encoding="utf-8")
-        )
+        import secure_store
+
+        payload = secure_store.read_encrypted(path)
+        if payload:
+            data = json.loads(payload.decode("utf-8"))
+            if data.get("server") and data.get("token"):
+                return data
+    except Exception:
+        pass
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("server") and data.get("token"):
             return data
     except (OSError, ValueError, TypeError):
