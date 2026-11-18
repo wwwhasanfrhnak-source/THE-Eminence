@@ -134,7 +134,8 @@ jobs:
           # Reclaim NDK space; the emulator build no longer needs it.
           rm -rf "$HOME"/.buildozer/android/platform/android-ndk-* || true
 
-          curl -sSLo /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          curl -sSL --max-time 900 --retry 3 -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          ls -l /tmp/cmdline-tools.zip
           rm -rf /tmp/cmdline-tools "$SDK/cmdline-tools/latest"
           unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
           mkdir -p "$SDK/cmdline-tools"
@@ -142,12 +143,17 @@ jobs:
           SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
           AVDM="$SDK/cmdline-tools/latest/bin/avdmanager"
 
-          yes | "$SDKM" --sdk_root="$SDK" --licenses > licenses.txt 2>&1 || true
-          "$SDKM" --sdk_root="$SDK" "platform-tools" "emulator" \
-            "platforms;android-30" "system-images;android-30;google_apis;x86_64" \
-            2>&1 | tail -n 40 | tee sdkmanager.txt
+          yes | timeout 600 "$SDKM" --sdk_root="$SDK" --licenses > licenses.txt 2>&1 || true
+          set +e
+          timeout 2400 "$SDKM" --sdk_root="$SDK" "platform-tools" "emulator" \
+            "system-images;android-30;google_apis;x86_64" \
+            2>&1 | tr '\r' '\n' | tail -n 60 | tee sdkmanager.txt
+          SDKM_STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "sdkmanager exit: $SDKM_STATUS" | tee -a sdkmanager.txt
+          df -h /home | tee -a sdkmanager.txt
 
-          echo no | "$AVDM" create avd -n smoke30 \
+          echo no | timeout 600 "$AVDM" create avd -n smoke30 \
             -k "system-images;android-30;google_apis;x86_64" --force \
             2>&1 | tee avdmanager.txt
 
@@ -156,9 +162,10 @@ jobs:
             > emulator.log 2>&1 &
           EMULATOR_PID=$!
           echo "emulator pid $EMULATOR_PID"
+          "$ADB" start-server >/dev/null 2>&1 || true
 
           BOOTED=0
-          for _ in $(seq 1 150); do
+          for _ in $(seq 1 90); do
             STATE=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
             if [ "$STATE" = "1" ]; then BOOTED=1; break; fi
             if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then echo "emulator exited early"; break; fi
@@ -178,18 +185,18 @@ jobs:
           fi
           "${BT}apksigner" verify --verbose --print-certs "$APK" 2>&1 | tee signature.txt
 
-          "$ADB" install -r "$APK" 2>&1 | tee install.txt || true
-          "$ADB" shell am start -n com.electrocalc.app/org.kivy.android.PythonActivity 2>&1 | tee launch.txt || true
+          timeout 300 "$ADB" install -r "$APK" 2>&1 | tee install.txt || true
+          timeout 120 "$ADB" shell am start -n com.electrocalc.app/org.kivy.android.PythonActivity 2>&1 | tee launch.txt || true
           sleep 15
-          "$ADB" exec-out screencap -p > splash-check.png || true
+          timeout 60 "$ADB" exec-out screencap -p > splash-check.png || true
           sleep 45
           "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt || true
           "$ADB" shell dumpsys activity activities > activities.txt 2>&1 || true
           "$ADB" shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
           "$ADB" shell cat /sdcard/window.xml > window.xml 2>/dev/null || true
-          "$ADB" logcat -d > logcat.txt 2>&1 || true
-          "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
-          "$ADB" exec-out screencap -p > emulator-startup.png || true
+          timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
+          timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
+          timeout 60 "$ADB" exec-out screencap -p > emulator-startup.png || true
           ls -l emulator-startup.png 2>/dev/null || true
           test -s pid.txt
 
