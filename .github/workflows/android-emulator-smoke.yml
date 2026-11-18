@@ -108,23 +108,24 @@ jobs:
           api-level: 30
           target: google_apis
           arch: x86_64
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -uo pipefail
             APK=$(find mobile_app/bin -maxdepth 1 -name '*-x86_64-debug.apk' -type f | head -n 1)
-            test -n "$APK"
-            adb install -r "$APK"
-            adb shell am start -W -n com.electrocalc.app/org.kivy.android.PythonActivity
-            sleep 60
-            PID=$(adb shell pidof com.electrocalc.app | tr -d '\r')
-            echo "pid=$PID"
-            test -n "$PID"
-            adb shell dumpsys activity activities | grep -i electrocalc | head -5 || true
-            adb logcat -d | grep -iE "AndroidRuntime|python|kivy|electrocalc" | tail -80 || true
-            adb exec-out screencap -p > emulator-startup.png
-            ls -l emulator-startup.png
+            echo "apk=$APK"
+            adb wait-for-device
+            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+            adb install -r "$APK" 2>&1 | tee install.txt
+            adb shell monkey -p com.electrocalc.app -c android.intent.category.LAUNCHER 1 2>&1 | tee launch.txt || true
+            sleep 45
+            adb shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt
+            adb shell dumpsys activity activities > activities.txt 2>&1 || true
+            adb logcat -d > logcat.txt 2>&1 || true
+            adb exec-out screencap -p > emulator-startup.png || true
+            ls -l emulator-startup.png 2>/dev/null || true
+            test -s pid.txt
 
       - name: Upload emulator evidence
         if: always()
@@ -133,6 +134,12 @@ jobs:
           name: emulator-smoke-evidence
           path: |
             emulator-startup.png
+            install.txt
+            launch.txt
+            pid.txt
+            activities.txt
+            logcat.txt
             buildozer-emulator.log
+            mobile_app/bin/*.apk
           if-no-files-found: warn
           retention-days: 7
