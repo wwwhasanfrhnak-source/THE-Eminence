@@ -1,0 +1,120 @@
+name: Android Debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-build
+    paths:
+      - "mobile_app/**"
+      - ".github/workflows/android-build.yml"
+
+concurrency:
+  group: android-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ElectroCalc APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify bundled database has no personal data
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          db = Path("mobile_app/assets/electrocalc.db")
+          assert db.is_file(), f"missing bundled database: {db}"
+          connection = sqlite3.connect(str(db))
+          try:
+              users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+              sessions = connection.execute(
+                  "SELECT COUNT(*) FROM user_sessions"
+              ).fetchone()[0] if connection.execute(
+                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_sessions'"
+              ).fetchone() else 0
+          finally:
+              connection.close()
+          print(f"bundled users={users} sessions={sessions}")
+          assert users == 0, "refusing to publish a database containing users"
+          assert sessions == 0, "refusing to publish a database containing sessions"
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake libtool libtool-bin pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
+            cmake libffi-dev libssl-dev libltdl-dev \
+            git zip unzip openssl
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install buildozer cython==0.29.36
+
+      - name: Cache Buildozer toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            mobile_app/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('mobile_app/buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Build debug APK
+        working-directory: mobile_app
+        env:
+          BUILDOZER_WARN_ON_ROOT: "0"
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee ../buildozer-android.log
+
+      - name: Locate and rename APK
+        id: apk
+        run: |
+          APK=$(find mobile_app/bin -maxdepth 1 -name '*-debug.apk' -type f | head -n 1)
+          test -n "$APK"
+          mkdir -p artifact
+          cp "$APK" artifact/ElectroCalc-v1.0.0.apk
+          ls -lh artifact/ElectroCalc-v1.0.0.apk
+          echo "path=$PWD/artifact/ElectroCalc-v1.0.0.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ElectroCalc-v1.0.0-apk
+          path: artifact/ElectroCalc-v1.0.0.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: buildozer-android.log
+          if-no-files-found: warn
+          retention-days: 7
