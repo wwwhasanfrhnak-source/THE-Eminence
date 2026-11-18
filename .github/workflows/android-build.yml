@@ -102,6 +102,16 @@ jobs:
           ls -lh artifact/ElectroCalc-v1.0.0.apk
           echo "path=$PWD/artifact/ElectroCalc-v1.0.0.apk" >> "$GITHUB_OUTPUT"
 
+      - name: Verify APK metadata and contents
+        run: |
+          set -euo pipefail
+          APK=artifact/ElectroCalc-v1.0.0.apk
+          BUILD_TOOLS=$(find "$HOME/.buildozer/android/platform/android-sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          test -n "$BUILD_TOOLS"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -E "^(package:|sdkVersion:|targetSdkVersion:|native-code:)"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          unzip -l "$APK" | grep -E "assets/electrocalc.db|lib/arm64-v8a/"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
