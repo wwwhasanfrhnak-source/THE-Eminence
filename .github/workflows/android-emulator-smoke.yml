@@ -93,7 +93,7 @@ jobs:
       - name: Reset cached Android build tree
         run: rm -rf mobile_app/.buildozer
 
-      - name: Build x86_64 debug APK
+      - name: Build x86_64 release APK
         working-directory: mobile_app
         env:
           BUILDOZER_WARN_ON_ROOT: "0"
@@ -101,7 +101,19 @@ jobs:
           set -euo pipefail
           sed -i 's/^android.archs = arm64-v8a$/android.archs = x86_64/' buildozer.spec
           grep '^android.archs' buildozer.spec
-          buildozer -v android debug 2>&1 | tee ../buildozer-emulator.log
+          KEYSTORE="$RUNNER_TEMP/smoke.keystore"
+          PASS=$(openssl rand -hex 24)
+          echo "::add-mask::$PASS"
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" -storetype PKCS12 -alias smoke \
+            -keyalg RSA -keysize 2048 -validity 365 \
+            -storepass "$PASS" -keypass "$PASS" \
+            -dname "CN=Smoke Test, OU=Mobile, O=ElectroCalc, C=IR"
+          export P4A_RELEASE_KEYSTORE="$KEYSTORE"
+          export P4A_RELEASE_KEYSTORE_PASSWD="$PASS"
+          export P4A_RELEASE_KEYALIAS=smoke
+          export P4A_RELEASE_KEYALIAS_PASSWD="$PASS"
+          buildozer -v android release 2>&1 | tee ../buildozer-emulator.log
 
       - name: Install and launch on emulator
         env:
@@ -135,7 +147,7 @@ jobs:
             "platforms;android-30" "system-images;android-30;google_apis;x86_64" \
             2>&1 | tail -n 40 | tee sdkmanager.txt
 
-          echo no | "$AVDM" --sdk_root="$SDK" create avd -n smoke30 \
+          echo no | "$AVDM" create avd -n smoke30 \
             -k "system-images;android-30;google_apis;x86_64" --force \
             2>&1 | tee avdmanager.txt
 
@@ -146,22 +158,35 @@ jobs:
           echo "emulator pid $EMULATOR_PID"
 
           BOOTED=0
-          for _ in $(seq 1 120); do
-            STATE=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+          for _ in $(seq 1 150); do
+            STATE=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
             if [ "$STATE" = "1" ]; then BOOTED=1; break; fi
             if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then echo "emulator exited early"; break; fi
             sleep 5
           done
           "$ADB" devices -l | tee devices.txt
           echo "booted=$BOOTED" | tee boot.txt
+          "$ADB" shell input keyevent 82 >/dev/null 2>&1 || true
 
-          APK=$(find mobile_app/bin -maxdepth 1 -name '*-x86_64-debug.apk' -type f | head -n 1)
+          APK=$(find mobile_app/bin -maxdepth 1 -name '*-release.apk' -type f | head -n 1)
           echo "apk=$APK" | tee apk.txt
-          "$ADB" install -r "$APK" 2>&1 | tee install.txt
-          "$ADB" shell monkey -p com.electrocalc.app -c android.intent.category.LAUNCHER 1 2>&1 | tee launch.txt || true
+          BT=$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | sort -V | tail -n 1)
+          echo "build-tools=$BT" | tee -a apk.txt
+          "${BT}aapt" dump badging "$APK" 2>&1 | grep -E "^(package:|sdkVersion:|targetSdkVersion:|native-code:)" | tee badging.txt
+          if "${BT}aapt" dump badging "$APK" 2>&1 | grep -q "application-debuggable"; then
+            echo "APK is debuggable"; exit 1
+          fi
+          "${BT}apksigner" verify --verbose --print-certs "$APK" 2>&1 | tee signature.txt
+
+          "$ADB" install -r "$APK" 2>&1 | tee install.txt || true
+          "$ADB" shell am start -n com.electrocalc.app/org.kivy.android.PythonActivity 2>&1 | tee launch.txt || true
+          sleep 15
+          "$ADB" exec-out screencap -p > splash-check.png || true
           sleep 45
-          "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt
+          "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt || true
           "$ADB" shell dumpsys activity activities > activities.txt 2>&1 || true
+          "$ADB" shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
+          "$ADB" shell cat /sdcard/window.xml > window.xml 2>/dev/null || true
           "$ADB" logcat -d > logcat.txt 2>&1 || true
           "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
           "$ADB" exec-out screencap -p > emulator-startup.png || true
@@ -183,6 +208,10 @@ jobs:
             avdmanager.txt
             emulator.log
             emulator-startup.png
+            splash-check.png
+            window.xml
+            badging.txt
+            signature.txt
             install.txt
             launch.txt
             pid.txt
@@ -190,6 +219,5 @@ jobs:
             logcat.txt
             logcat-crash.txt
             buildozer-emulator.log
-            mobile_app/bin/*.apk
           if-no-files-found: warn
           retention-days: 7
