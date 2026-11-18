@@ -13,7 +13,7 @@ fullscreen = 0
 presplash.filename = %(source.dir)s/assets/splash.png
 icon.filename = %(source.dir)s/assets/icon.png
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_WIFI_STATE
-android.extra_manifest_application_arguments = android:usesCleartextTraffic="true"
+android.extra_manifest_application_arguments = android-extra-manifest-application-arguments.xml
 android.api = 34
 android.minapi = 23
 android.ndk = 25b
