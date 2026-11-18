@@ -62,6 +62,22 @@ class ElectroCalcApp(MDApp):
         resource_add_path(str(ASSET_DIR))
         if FONT_PATH.is_file():
             LabelBase.register(name="Vazirmatn", fn_regular=str(FONT_PATH))
+            # KivyMD rewrites font_name from its theme font styles, which all
+            # point at the Roboto families, so point those at Vazirmatn too.
+            for family in (
+                "Roboto",
+                "RobotoThin",
+                "RobotoLight",
+                "RobotoMedium",
+                "RobotoBlack",
+            ):
+                LabelBase.register(
+                    name=family,
+                    fn_regular=str(FONT_PATH),
+                    fn_bold=str(FONT_PATH),
+                    fn_italic=str(FONT_PATH),
+                    fn_bolditalic=str(FONT_PATH),
+                )
 
         initialize_database()
 
