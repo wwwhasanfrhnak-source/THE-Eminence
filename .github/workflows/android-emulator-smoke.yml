@@ -200,6 +200,24 @@ jobs:
           ls -l emulator-startup.png 2>/dev/null || true
           test -s pid.txt
 
+      - name: Publish diagnostics
+        if: always()
+        run: |
+          {
+            echo "## Emulator diagnostics"
+            for f in environment.txt boot.txt apk.txt devices.txt badging.txt signature.txt avdmanager.txt install.txt launch.txt pid.txt; do
+              if [ -f "$f" ]; then echo "### $f"; echo '```'; tail -n 40 "$f"; echo '```'; fi
+            done
+            if [ -f sdkmanager.txt ]; then echo "### sdkmanager.txt"; echo '```'; tail -n 25 sdkmanager.txt; echo '```'; fi
+            if [ -f emulator.log ]; then echo "### emulator.log"; echo '```'; tail -n 40 emulator.log; echo '```'; fi
+            if [ -f logcat.txt ]; then
+              echo "### logcat relevant lines"
+              echo '```'
+              grep -aE "python|SDL|Kivy|FATAL|AndroidRuntime|Traceback|Exception|Error|electrocalc" logcat.txt | head -n 250 || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
