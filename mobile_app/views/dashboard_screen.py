@@ -101,7 +101,6 @@ class DashboardScreen(MDScreen):
             panel_color=self.colors.get("card", (1, 1, 1, 1)),
             selected_color_background=self.colors.get("accent_soft"),
             text_color_active=self.colors.get("accent"),
-            text_color_normal=self.colors.get("muted"),
         )
         self.home_tab = self._home_tab()
         self.projects_panel = ProjectsPanel()
@@ -118,6 +117,9 @@ class DashboardScreen(MDScreen):
         self.navigation.add_widget(self.home_tab)
         self.navigation.add_widget(self.projects_tab)
         self.navigation.add_widget(self.users_tab)
+        # KivyMD 1.2.0 resolves text_color_normal through ids.tab_bar, which
+        # does not exist yet during __init__, so it must be set afterwards.
+        self.navigation.text_color_normal = self.colors.get("muted")
         layout.add_widget(self.navigation)
         self.add_widget(layout)
 
