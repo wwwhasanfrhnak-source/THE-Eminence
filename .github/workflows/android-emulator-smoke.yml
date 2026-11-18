@@ -223,11 +223,14 @@ jobs:
           "$ADB" shell input tap 160 330 >/dev/null 2>&1 || true
           sleep 1
           "$ADB" shell input text "admin" >/dev/null 2>&1 || true
+          "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
+          sleep 1
           "$ADB" shell input tap 160 400 >/dev/null 2>&1 || true
           sleep 1
           "$ADB" shell input text "invalid-pass" >/dev/null 2>&1 || true
-          "$ADB" shell input keyevent 111 >/dev/null 2>&1 || true
-          sleep 1
+          "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
+          sleep 2
+          timeout 60 "$ADB" exec-out screencap -p > login-filled.png || true
           "$ADB" shell input tap 160 585 >/dev/null 2>&1 || true
           sleep 8
           timeout 60 "$ADB" exec-out screencap -p > login-attempt.png || true
@@ -273,6 +276,7 @@ jobs:
             splash-check.png
             emulator-relaunch.png
             login-attempt.png
+            login-filled.png
             focus.txt
             relaunch.txt
             pid-relaunch.txt
