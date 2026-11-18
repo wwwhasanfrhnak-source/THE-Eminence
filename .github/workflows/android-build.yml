@@ -74,6 +74,30 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install buildozer==1.5.0 cython==0.29.36
 
+      - name: Patch Buildozer manifest-argument quoting
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          import buildozer.targets.android as target
+
+          path = Path(target.__file__)
+          text = path.read_text(encoding="utf-8")
+          text, escapes = re.subn(
+              r"\.replace\('\"', '\\\\\"'\)", "", text
+          )
+          text, quoting = re.subn(
+              r"--extra-manifest-application-arguments=\"\{\}\"",
+              "--extra-manifest-application-arguments={}",
+              text,
+          )
+          assert escapes == 1, f"quoting escape patch failed: {escapes}"
+          assert quoting == 1, f"argument quoting patch failed: {quoting}"
+          path.write_text(text, encoding="utf-8")
+          print(f"patched {path}")
+          PY
+
       - name: Cache Buildozer toolchain
         uses: actions/cache@v4
         with:
