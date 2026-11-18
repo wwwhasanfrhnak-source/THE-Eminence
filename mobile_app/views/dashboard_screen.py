@@ -296,12 +296,18 @@ class DashboardScreen(MDScreen):
             )
 
     def _apply_tab_permissions(self):
+        try:
+            managed = list(self.navigation.ids.tab_manager.screens)
+        except (AttributeError, KeyError):
+            managed = []
         for tab, permission in (
             (self.projects_tab, "projects.view"),
             (self.users_tab, "users.view"),
         ):
+            # ScreenManager does not set ``parent`` on its screens, so
+            # membership in its screen list is the reliable check.
             allowed = self._allowed(permission)
-            attached = tab.parent is not None
+            attached = tab in managed
             if allowed and not attached:
                 self.navigation.add_widget(tab)
             elif not allowed and attached:

@@ -14,8 +14,12 @@ import api
 import permissions as perm_module
 from auth import (
     authenticate_local,
+    bootstrap_local_admin,
     cache_online_profile,
     cache_online_session,
+    local_user_count,
+    password_change_required,
+    set_local_password,
 )
 from database import initialize_database
 from rtl import rtl
@@ -113,9 +117,14 @@ class ElectroCalcApp(MDApp):
         ).start()
 
     def _finish_async(self, result, callback):
+        if result.get("ok") and result.get("must_change"):
+            self._pending_login = result
+            if callback:
+                callback(True, "", True)
+            return
         ok, message = self._apply_auth(result)
         if callback:
-            callback(ok, message)
+            callback(ok, message, False)
 
     def _auth_result(self, username, password, server=""):
         server = (server or "").strip()
@@ -141,6 +150,23 @@ class ElectroCalcApp(MDApp):
                 "online": True,
             }
 
+        if local_user_count() == 0:
+            user, effective, error = bootstrap_local_admin(username, password)
+            if user is None:
+                return {
+                    "ok": False,
+                    "message": error or "ایجاد مدیر اولیه ناموفق بود.",
+                }
+            return {
+                "ok": True,
+                "user": dict(user),
+                "permissions": sorted(effective),
+                "server": "",
+                "token": "",
+                "online": False,
+                "must_change": True,
+            }
+
         user, effective, error = authenticate_local(username, password)
         if user is None:
             return {
@@ -154,11 +180,15 @@ class ElectroCalcApp(MDApp):
             "server": "",
             "token": "",
             "online": False,
+            "must_change": password_change_required(user["username"]),
         }
 
     def _apply_auth(self, result):
         if not result.get("ok"):
             return False, result.get("message", "")
+        if result.get("must_change"):
+            self._pending_login = result
+            return True, ""
         self._enter_dashboard(
             result["user"],
             result["permissions"],
@@ -167,6 +197,28 @@ class ElectroCalcApp(MDApp):
             online=result["online"],
         )
         return True, ""
+
+    def complete_forced_change(self, new_password):
+        """Apply the mandatory first-login password change and open the app."""
+        pending = getattr(self, "_pending_login", None)
+        if not pending:
+            return False, "درخواست تغییر رمز معتبر نیست."
+        username = (pending.get("user") or {}).get("username", "")
+        ok, message = set_local_password(username, new_password)
+        if not ok:
+            return False, message
+        self._pending_login = None
+        self._enter_dashboard(
+            pending["user"],
+            pending["permissions"],
+            server=pending.get("server", ""),
+            token=pending.get("token", ""),
+            online=pending.get("online", False),
+        )
+        return True, ""
+
+    def cancel_forced_change(self):
+        self._pending_login = None
 
     def restore_session(self):
         """بازیابی نشست ذخیره‌شده و اعتبارسنجی دوباره با سرور."""

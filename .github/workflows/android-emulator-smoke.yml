@@ -218,29 +218,100 @@ jobs:
           "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid-relaunch.txt || true
           timeout 60 "$ADB" exec-out screencap -p > emulator-relaunch.png || true
 
-          # Drive the login form once: empty DB means local auth must reject
-          # this attempt without blocking the UI thread.
+          # First-run setup: with an empty local database the app creates the
+          # initial administrator from the credentials entered here, then
+          # requires a password change before the dashboard opens.
+          SMOKE_USER=smokeadmin
+          SMOKE_PASS=$(openssl rand -hex 8)
+          NEW_PASS=$(openssl rand -hex 9)
+          echo "::add-mask::$SMOKE_PASS"
+          echo "::add-mask::$NEW_PASS"
           "$ADB" shell input tap 160 330 >/dev/null 2>&1 || true
           sleep 1
-          "$ADB" shell input text "admin" >/dev/null 2>&1 || true
+          "$ADB" shell input text "$SMOKE_USER" >/dev/null 2>&1 || true
           "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
           sleep 1
           "$ADB" shell input tap 160 400 >/dev/null 2>&1 || true
           sleep 1
-          "$ADB" shell input text "invalid-pass" >/dev/null 2>&1 || true
+          "$ADB" shell input text "$SMOKE_PASS" >/dev/null 2>&1 || true
           "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
           sleep 2
-          timeout 60 "$ADB" exec-out screencap -p > login-filled.png || true
+          timeout 60 "$ADB" exec-out screencap -p > setup-filled.png || true
           "$ADB" shell input tap 160 585 >/dev/null 2>&1 || true
-          sleep 8
-          timeout 60 "$ADB" exec-out screencap -p > login-attempt.png || true
+          sleep 15
+          timeout 60 "$ADB" exec-out screencap -p > change-dialog.png || true
+          "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid-after-setup.txt || true
+
+          "$ADB" root >/dev/null 2>&1 || true
+          sleep 5
+          "$ADB" shell cp /data/user/0/com.electrocalc.app/files/electrocalc.db /sdcard/ec.db >/dev/null 2>&1 || true
+          timeout 120 "$ADB" pull /sdcard/ec.db ec.db >/dev/null 2>&1 || true
+          python3 - <<'PY' 2>&1 | tee db-check.txt || true
+          import sqlite3, sys
+          try:
+              connection = sqlite3.connect("ec.db")
+              users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+              row = connection.execute(
+                  "SELECT username, password_hash, is_superadmin, active, "
+                  "account_status, platform_android FROM users LIMIT 1"
+              ).fetchone()
+              flags = connection.execute(
+                  "SELECT COUNT(*) FROM app_settings "
+                  "WHERE key LIKE 'password_change_required:%'"
+              ).fetchone()[0]
+              scheme = (
+                  "bcrypt" if row and str(row[1]).startswith(("$2a$", "$2b$", "$2y$"))
+                  else "other"
+              )
+              print(f"users={users}")
+              print(f"username={row[0] if row else ''}")
+              print(f"hash_scheme={scheme}")
+              print(f"superadmin={row[2] if row else ''} active={row[3] if row else ''} "
+                    f"status={row[4] if row else ''} android={row[5] if row else ''}")
+              print(f"must_change_flags={flags}")
+          except Exception as exc:
+              print("db-check error:", type(exc).__name__)
+              sys.exit(1)
+          PY
+
+          # Complete the forced password change on the dialog (best effort;
+          # the same flow is covered by the desktop Kivy UI test).
+          "$ADB" shell input tap 160 300 >/dev/null 2>&1 || true
+          sleep 1
+          "$ADB" shell input text "$NEW_PASS" >/dev/null 2>&1 || true
           "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
-          sleep 2
-          timeout 60 "$ADB" exec-out screencap -p > login-error.png || true
+          sleep 1
+          "$ADB" shell input tap 160 360 >/dev/null 2>&1 || true
+          sleep 1
+          "$ADB" shell input text "$NEW_PASS" >/dev/null 2>&1 || true
+          "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
+          sleep 1
+          "$ADB" shell input tap 280 445 >/dev/null 2>&1 || true
+          sleep 10
+          timeout 60 "$ADB" exec-out screencap -p > after-change.png || true
+          "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid-after-change.txt || true
+          "$ADB" shell cp /data/user/0/com.electrocalc.app/files/electrocalc.db /sdcard/ec2.db >/dev/null 2>&1 || true
+          timeout 120 "$ADB" pull /sdcard/ec2.db ec2.db >/dev/null 2>&1 || true
+          python3 - <<'PY' 2>&1 | tee db-check2.txt || true
+          import sqlite3
+          try:
+              connection = sqlite3.connect("ec2.db")
+              changed = connection.execute(
+                  "SELECT password_hash FROM users LIMIT 1"
+              ).fetchone()
+              flags = connection.execute(
+                  "SELECT COUNT(*) FROM app_settings "
+                  "WHERE key LIKE 'password_change_required:%'"
+              ).fetchone()[0]
+              print(f"must_change_flags={flags}")
+              print(f"hash_scheme={'bcrypt' if changed and str(changed[0]).startswith('$2') else 'other'}")
+          except Exception as exc:
+              print("db-check2 error:", type(exc).__name__)
+          PY
 
           timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
           timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
-          ls -l emulator-startup.png emulator-relaunch.png login-attempt.png 2>/dev/null || true
+          ls -l emulator-startup.png emulator-relaunch.png change-dialog.png 2>/dev/null || true
           test -s pid.txt
 
       - name: Publish diagnostics
@@ -278,12 +349,16 @@ jobs:
             emulator-startup.png
             splash-check.png
             emulator-relaunch.png
-            login-attempt.png
-            login-filled.png
-            login-error.png
+            setup-filled.png
+            change-dialog.png
+            after-change.png
             focus.txt
             relaunch.txt
             pid-relaunch.txt
+            pid-after-setup.txt
+            pid-after-change.txt
+            db-check.txt
+            db-check2.txt
             window.xml
             badging.txt
             signature.txt

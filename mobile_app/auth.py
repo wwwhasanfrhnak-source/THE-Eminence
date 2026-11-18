@@ -5,7 +5,7 @@ import hmac
 import os
 import re
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from database import get_connection
 
@@ -14,7 +14,9 @@ _PBKDF2_PREFIX = "pbkdf2_sha256$"
 _BCRYPT_PREFIXES = ("$2a$", "$2b$", "$2y$")
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 CACHE_STAMP_KEY = "mobile_user_cache_updated_at"
-OFFLINE_CACHE_DAYS = 7
+PASSWORD_CHANGE_PREFIX = "password_change_required:"
+MIN_BOOTSTRAP_PASSWORD = 6
+MIN_PASSWORD_LENGTH = 8
 _PBKDF2_ROUNDS = 200_000
 
 
@@ -64,10 +66,6 @@ def authenticate_local(username: str, password: str):
         return None, set(), "نام کاربری و رمز عبور را وارد کنید."
 
     with closing(get_connection()) as connection:
-        if not _cache_is_fresh(connection):
-            return None, set(), (
-                "برای ورود آفلاین ابتدا یک‌بار با سرور دفتر وارد شوید."
-            )
         user = connection.execute(
             "SELECT * FROM users WHERE username = ? LIMIT 1", (username,)
         ).fetchone()
@@ -82,24 +80,136 @@ def authenticate_local(username: str, password: str):
         effective = perm_module.effective_permissions(connection, user)
         if not perm_module.is_superadmin(user) and "app.login" not in effective:
             return None, set(), "مجوز ورود به برنامه برای این حساب وجود ندارد."
+        _touch_cache_stamp(connection)
+        connection.commit()
     return user, effective, ""
 
 
-def _cache_is_fresh(connection) -> bool:
-    row = connection.execute(
-        "SELECT value FROM app_settings WHERE key = ?", (CACHE_STAMP_KEY,)
-    ).fetchone()
-    if row is None or not row[0]:
-        return False
-    try:
-        updated = datetime.fromisoformat(str(row[0]))
-    except ValueError:
-        return False
-    if updated.tzinfo is None:
-        updated = updated.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - updated <= timedelta(
-        days=OFFLINE_CACHE_DAYS
+def _touch_cache_stamp(connection):
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    connection.execute(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+        "updated_at = excluded.updated_at",
+        (CACHE_STAMP_KEY, now, now),
     )
+
+
+def local_user_count() -> int:
+    with closing(get_connection()) as connection:
+        return int(
+            connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        )
+
+
+def _hash_password(password: str) -> str:
+    try:
+        import bcrypt
+
+        return bcrypt.hashpw(
+            password.encode("utf-8"), bcrypt.gensalt()
+        ).decode("ascii")
+    except ImportError:
+        return _hash_for_cache(password)
+
+
+def bootstrap_local_admin(username: str, password: str):
+    """Create the first local administrator on a fresh device database.
+
+    Runs only while the local users table is empty; existing accounts and
+    synced profiles are never touched. The password is stored as a hash and
+    the account must change it on first sign-in.
+    """
+    import permissions as perm_module
+
+    username = (username or "").strip()
+    if len(username) < 3 or re.search(r"\s", username):
+        return None, set(), "نام کاربری باید حداقل ۳ کاراکتر و بدون فاصله باشد."
+    if not password or len(password) < MIN_BOOTSTRAP_PASSWORD:
+        return None, set(), (
+            f"رمز عبور باید حداقل {MIN_BOOTSTRAP_PASSWORD} کاراکتر باشد."
+        )
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with closing(get_connection()) as connection:
+        if connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+            return None, set(), "برای این دستگاه از قبل حساب تعریف شده است."
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(users)")
+        }
+        values = {
+            "username": username,
+            "password_hash": _hash_password(password),
+            "full_name": "",
+            "role": "admin",
+            "phone": "",
+            "active": 1,
+            "permissions": "",
+            "job_title": "",
+            "notes": "",
+            "account_status": "active",
+            "platform_windows": 1,
+            "platform_android": 1,
+            "is_superadmin": 1,
+            "permissions_version": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        usable = {key: value for key, value in values.items() if key in columns}
+        fields = ", ".join(usable)
+        marks = ", ".join("?" for _ in usable)
+        connection.execute(
+            f"INSERT INTO users ({fields}) VALUES ({marks})",
+            tuple(usable.values()),
+        )
+        connection.execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "updated_at = excluded.updated_at",
+            (PASSWORD_CHANGE_PREFIX + username, "1", now),
+        )
+        _touch_cache_stamp(connection)
+        connection.commit()
+        user = connection.execute(
+            "SELECT * FROM users WHERE username = ? LIMIT 1", (username,)
+        ).fetchone()
+        effective = perm_module.effective_permissions(connection, user)
+    return user, effective, ""
+
+
+def password_change_required(username: str) -> bool:
+    key = PASSWORD_CHANGE_PREFIX + str(username or "")
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (key,)
+        ).fetchone()
+    return bool(row and str(row[0]) == "1")
+
+
+def set_local_password(username: str, new_password: str):
+    username = (username or "").strip()
+    if len(new_password or "") < MIN_PASSWORD_LENGTH:
+        return False, (
+            f"رمز عبور جدید باید حداقل {MIN_PASSWORD_LENGTH} کاراکتر باشد."
+        )
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            "SELECT 1 FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if row is None:
+            return False, "حساب کاربری یافت نشد."
+        connection.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? "
+            "WHERE username = ?",
+            (_hash_password(new_password), now, username),
+        )
+        connection.execute(
+            "DELETE FROM app_settings WHERE key = ?",
+            (PASSWORD_CHANGE_PREFIX + username,),
+        )
+        connection.commit()
+    return True, ""
 
 
 def _hash_for_cache(password: str) -> str:
