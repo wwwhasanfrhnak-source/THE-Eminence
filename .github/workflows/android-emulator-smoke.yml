@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - ".github/workflows/android-emulator-smoke.yml"
+      - "mobile_app/**"
 
 concurrency:
   group: android-smoke-${{ github.ref }}
@@ -197,18 +198,29 @@ jobs:
           "${BT}apksigner" verify --verbose --print-certs "$APK" 2>&1 | tee signature.txt
 
           timeout 300 "$ADB" install -r "$APK" 2>&1 | tee install.txt || true
+          "$ADB" shell svc wifi disable >/dev/null 2>&1 || true
+          "$ADB" shell svc data disable >/dev/null 2>&1 || true
           timeout 120 "$ADB" shell am start -n com.electrocalc.app/org.kivy.android.PythonActivity 2>&1 | tee launch.txt || true
           sleep 15
           timeout 60 "$ADB" exec-out screencap -p > splash-check.png || true
           sleep 45
           "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid.txt || true
+          "$ADB" shell dumpsys window windows 2>&1 | grep -E "mCurrentFocus|mFocusedApp" | tee focus.txt || true
           "$ADB" shell dumpsys activity activities > activities.txt 2>&1 || true
           "$ADB" shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
           "$ADB" shell cat /sdcard/window.xml > window.xml 2>/dev/null || true
+          timeout 60 "$ADB" exec-out screencap -p > emulator-startup.png || true
+
+          timeout 60 "$ADB" shell am force-stop com.electrocalc.app >/dev/null 2>&1 || true
+          sleep 3
+          timeout 120 "$ADB" shell am start -n com.electrocalc.app/org.kivy.android.PythonActivity 2>&1 | tee relaunch.txt || true
+          sleep 30
+          "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid-relaunch.txt || true
+          timeout 60 "$ADB" exec-out screencap -p > emulator-relaunch.png || true
+
           timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
           timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
-          timeout 60 "$ADB" exec-out screencap -p > emulator-startup.png || true
-          ls -l emulator-startup.png 2>/dev/null || true
+          ls -l emulator-startup.png emulator-relaunch.png 2>/dev/null || true
           test -s pid.txt
 
       - name: Publish diagnostics
@@ -216,7 +228,7 @@ jobs:
         run: |
           {
             echo "## Emulator diagnostics"
-            for f in environment.txt boot.txt apk.txt devices.txt badging.txt signature.txt avdmanager.txt install.txt launch.txt pid.txt; do
+            for f in environment.txt boot.txt apk.txt devices.txt badging.txt signature.txt avdmanager.txt install.txt launch.txt pid.txt focus.txt relaunch.txt pid-relaunch.txt; do
               if [ -f "$f" ]; then echo "### $f"; echo '```'; tail -n 40 "$f"; echo '```'; fi
             done
             if [ -f sdkmanager.txt ]; then echo "### sdkmanager.txt"; echo '```'; tail -n 25 sdkmanager.txt; echo '```'; fi
@@ -245,6 +257,10 @@ jobs:
             emulator.log
             emulator-startup.png
             splash-check.png
+            emulator-relaunch.png
+            focus.txt
+            relaunch.txt
+            pid-relaunch.txt
             window.xml
             badging.txt
             signature.txt
