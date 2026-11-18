@@ -22,6 +22,8 @@ android.allow_backup = False
 android.private_storage = True
 android.accept_sdk_license = True
 p4a.bootstrap = sdl2
+p4a.branch = v2024.01.21
+p4a.commit = v2024.01.21
 
 [buildozer]
 log_level = 2
