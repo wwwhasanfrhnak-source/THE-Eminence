@@ -8,7 +8,7 @@ from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.textfield import MDTextField
 
-from rtl import rtl
+from rtl import rtl, rtl_lines
 
 
 class LoginScreen(MDScreen):
@@ -176,11 +176,11 @@ class LoginScreen(MDScreen):
         password = self.password_field.text
         server = self.server_field.text.strip()
         if not username or not password:
-            self.message.text = rtl("نام کاربری و رمز عبور را وارد کنید.")
+            self.message.text = rtl_lines("نام کاربری و رمز عبور را وارد کنید.")
             return
         app = self._app()
         if app is None:
-            self.message.text = rtl("برنامه آماده نیست؛ دوباره تلاش کنید.")
+            self.message.text = rtl_lines("برنامه آماده نیست؛ دوباره تلاش کنید.")
             return
         self._busy = True
         self.submit_button.disabled = True
@@ -193,7 +193,7 @@ class LoginScreen(MDScreen):
         self.submit_button.disabled = False
         self.submit_button.text = rtl("ورود")
         if not ok:
-            self.message.text = rtl(message or "ورود ناموفق بود.")
+            self.message.text = rtl_lines(message or "ورود ناموفق بود.")
             self.password_field.text = ""
             self.password_field.focus = True
 
