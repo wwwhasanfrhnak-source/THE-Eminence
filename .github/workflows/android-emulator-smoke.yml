@@ -123,6 +123,9 @@ jobs:
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
           ADB="$SDK/platform-tools/adb"
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          export ANDROID_USER_HOME="$HOME/.android"
+          mkdir -p "$ANDROID_AVD_HOME"
 
           {
             echo "--- disk ---"; df -h / /home || true
@@ -154,8 +157,16 @@ jobs:
           df -h /home | tee -a sdkmanager.txt
 
           echo no | timeout 600 "$AVDM" create avd -n smoke30 \
-            -k "system-images;android-30;google_apis;x86_64" --force \
+            -k "system-images;android-30;google_apis;x86_64" \
+            -p "$ANDROID_AVD_HOME/smoke30.avd" --force \
             2>&1 | tee avdmanager.txt
+          echo "avdmanager exit: ${PIPESTATUS[1]}" | tee -a avdmanager.txt
+          ls -la "$ANDROID_AVD_HOME" | tee -a avdmanager.txt
+          "$AVDM" list avd 2>&1 | tee -a avdmanager.txt || true
+          if [ ! -f "$ANDROID_AVD_HOME/smoke30.ini" ]; then
+            echo "smoke30.ini missing after create; searching" | tee -a avdmanager.txt
+            find "$HOME" -maxdepth 6 -name 'smoke30*' 2>/dev/null | tee -a avdmanager.txt || true
+          fi
 
           "$SDK/emulator/emulator" -avd smoke30 -no-window -gpu swiftshader_indirect \
             -noaudio -no-boot-anim -no-snapshot -camera-back none -no-metrics \
