@@ -21,13 +21,10 @@ fail() {
   pull_db db-failure >/dev/null 2>&1 || true
   # Surface the failure context as annotations so diagnosis works even when
   # logs and artifacts are unavailable.
-  [ -f db-timeline.txt ] && tail -n 5 db-timeline.txt | cut -c1-240 | while IFS= read -r line; do
+  [ -f db-timeline.txt ] && tail -n 3 db-timeline.txt | cut -c1-240 | while IFS= read -r line; do
     echo "::error title=journey-db::${line}"
   done
-  applog | tail -n 5 | cut -c1-240 | while IFS= read -r line; do
-    echo "::error title=journey-log::${line}"
-  done
-  kivy_log | tail -n 10 | cut -c1-240 | while IFS= read -r line; do
+  kivy_log | tail -n 6 | cut -c1-240 | while IFS= read -r line; do
     echo "::error title=journey-klog::${line}"
   done
   exit 1
@@ -80,13 +77,21 @@ applog() { timeout 60 "$ADB" logcat -d -s python 2>/dev/null | grep -a "ElectroC
 kivy_log() {
   timeout 90 "$ADB" shell "cat /data/user/0/$PKG/files/app/.kivy/logs/*.txt /data/user/0/$PKG/files/app/logs/*.txt 2>/dev/null" 2>/dev/null | tr -d '\r'
 }
-log_has() { kivy_log | grep -q -- "$1" || applog | grep -q -- "$1"; }
 log_count() {
   local n
   n=$(kivy_log | grep -ac -- "$1")
   [ -n "$n" ] || n=0
   echo "$n"
 }
+applog_count() {
+  local n
+  n=$(applog | grep -ac -- "$1")
+  [ -n "$n" ] || n=0
+  echo "$n"
+}
+# grep -q can close the pipe early, which under pipefail reports the pipeline
+# as failed even when the pattern matched; counting always drains the input.
+log_has() { [ "$(log_count "$1")" -gt 0 ] || [ "$(applog_count "$1")" -gt 0 ]; }
 wait_count_gt() {  # needle baseline tries [sleep]
   local needle="$1" base="$2" tries="${3:-10}" pause="${4:-2}" i
   for i in $(seq 1 "$tries"); do
@@ -158,35 +163,44 @@ timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
 START_TS=$(date +%s)
 TICK=0
-for _ in $(seq 1 375); do
-  log_has "app_start" && STARTED=1 && break
+RELAUNCHED=0
+for _ in $(seq 1 300); do
   TICK=$((TICK+1))
-  if [ $((TICK % 5)) -eq 0 ]; then
-    echo "$(date +%T) pid=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')" >> startup-pid-timeline.txt
+  if [ "$(log_count 'app_start')" -gt 0 ]; then STARTED=1; break; fi
+  if [ $((TICK % 8)) -eq 0 ]; then
+    echo "$(date +%T) pid=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r') events=$(log_count 'ElectroCalc:')" >> startup-pid-timeline.txt
+    if [ "$(log_count 'ElectroCalc:')" -eq 0 ] && [ "$(applog_count 'app_start')" -gt 0 ]; then
+      STARTED=1
+      break
+    fi
   fi
-  if [ $((TICK % 150)) -eq 0 ]; then
+  if [ $((TICK % 100)) -eq 0 ]; then
     echo "$(date +%T) kivy_lines=$(kivy_log | wc -l) python_lines=$(applog | wc -l)" >> startup-samples.txt
   fi
-  sleep 4
+  if [ "$RELAUNCHED" = "0" ] && [ "$TICK" -ge 100 ] && [ "$(log_count 'build_begin')" -gt 0 ]; then
+    echo "::notice title=startup::no app_start after 100 ticks; relaunching once"
+    "$ADB" shell am force-stop "$PKG" >/dev/null 2>&1 || true
+    sleep 3
+    timeout 120 "$ADB" shell am start -n "$ACT" >> relaunch.txt 2>&1 || true
+    RELAUNCHED=1
+  fi
+  sleep 6
 done
-: > startup-wait.txt
 echo "startup wait seconds: $(( $(date +%s) - START_TS ))" | tee startup-wait.txt
 if [ "$STARTED" != "1" ]; then
   "$ADB" shell pidof "$PKG" | tr -d '\r' | tee startup-pid.txt || true
-  "$ADB" shell pm list packages 2>/dev/null | grep -F "$PKG" | tee -a startup-pid.txt || true
   timeout 60 "$ADB" logcat -d -b crash > startup-crash.txt 2>&1 || true
   timeout 60 "$ADB" logcat -d > startup-logcat.txt 2>&1 || true
-  timeout 60 "$ADB" shell dumpsys activity activities 2>/dev/null | grep -aE "mResumedActivity|mCurrentFocus|electrocalc" | tee startup-activity.txt || true
+  timeout 60 "$ADB" shell dumpsys activity activities 2>/dev/null | grep -aE "mResumedActivity|mCurrentFocus|electrocalc" > startup-activity.txt || true
   kivy_log > startup-kivy.log 2>/dev/null || true
   {
-    echo "startup diagnostic: pid=$(cat startup-pid.txt | tr '\n' ' ')"
-    cat startup-wait.txt 2>/dev/null || true
-    echo "logcat-python-lines=$(grep -ac 'python' startup-logcat.txt || true) kivy-log-lines=$(wc -l < startup-kivy.log 2>/dev/null || echo 0)"
-    tail -n 10 startup-activity.txt 2>/dev/null || true
-    tail -n 30 startup-kivy.log 2>/dev/null || true
-    tail -n 20 startup-crash.txt
-    grep -aE "python|Kivy|SDL|electrocalc|FATAL|AndroidRuntime" startup-logcat.txt | tail -n 30
-  } | cut -c1-240 | while IFS= read -r line; do
+    echo "wait=$(cat startup-wait.txt) relaunched=$RELAUNCHED pid=$(tr '\n' ' ' < startup-pid.txt)"
+    echo "klog_lines=$(wc -l < startup-kivy.log 2>/dev/null || echo 0) klog_events=$(grep -ac 'ElectroCalc:' startup-kivy.log || true) logcat_events=$(applog_count 'ElectroCalc:')"
+    echo "klog app_start=$(grep -ac 'app_start' startup-kivy.log || true) build_begin=$(grep -ac 'build_begin' startup-kivy.log || true) module_import=$(grep -ac 'module_import' startup-kivy.log || true)"
+    grep -a 'ElectroCalc:' startup-kivy.log | tail -n 3 | cut -c1-240
+    grep -aE 'mResumedActivity|mFocusedWindow' startup-activity.txt | tail -n 2 | cut -c1-240
+    tail -n 2 startup-crash.txt | cut -c1-240
+  } | while IFS= read -r line; do
     echo "::error title=startup::${line}"
   done
   fail "app did not start"
