@@ -34,15 +34,38 @@ phase() { echo "::notice title=journey::${1}"; }
 shot() { timeout 60 "$ADB" exec-out screencap -p > "$1" || true; }
 tap() { "$ADB" shell input tap "$1" "$2" >/dev/null 2>&1 || true; sleep "${3:-1}"; }
 typ() { "$ADB" shell input text "$1" >/dev/null 2>&1 || true; sleep 1; }
-ime_off() {
-  if [ "${IME_DISABLED:-0}" = "1" ]; then sleep 1; return; fi
-  "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true; sleep 1
+keyboard_shown() {
+  local n
+  n=$("$ADB" shell dumpsys input_method 2>/dev/null | grep -acE 'mInputShown=true|mIsInputViewShown=true')
+  [ "${n:-0}" -gt 0 ]
+}
+hide_keyboard() {
+  local i=0
+  while keyboard_shown && [ "$i" -lt 3 ]; do
+    "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
+    sleep 1
+    i=$((i+1))
+  done
+}
+disable_imes() {
+  local ime
+  for ime in $("$ADB" shell ime list -s 2>/dev/null | tr -d '\r'); do
+    "$ADB" shell ime disable "$ime" >/dev/null 2>&1 || true
+  done
 }
 clear_field() {
   "$ADB" shell 'input keyevent 123; i=0; while [ $i -lt 24 ]; do input keyevent 67; i=$((i+1)); done' >/dev/null 2>&1 || true
   sleep 1
 }
-fill_field() { tap "$1" "$2" 1; clear_field; typ "$3"; ime_off; }
+fill_field() {
+  # A visible soft keyboard resizes the Kivy window and moves every widget, so
+  # the tap coordinates are only valid while it is hidden.
+  hide_keyboard
+  tap "$1" "$2" 1
+  clear_field
+  typ "$3"
+  hide_keyboard
+}
 fill_login() {
   # The login screen keeps the username across attempts; refill both anyway
   # so a stale value or a lost keystroke cannot silently break the attempt.
@@ -53,6 +76,7 @@ submit_form() {
   # Pressing Enter inside the password field triggers on_text_validate, which
   # is independent of the button position; fall back to tapping the button.
   local s0
+  hide_keyboard
   s0=$(log_count "login_submit")
   tap 160 400 1
   "$ADB" shell input keyevent 66 >/dev/null 2>&1 || true
@@ -64,6 +88,35 @@ submit_form() {
     set -- $coords
     tap "$1" "$2" 2
     [ "$(log_count 'login_submit')" -gt "$s0" ] && return 0
+  done
+  return 1
+}
+submit_lens() {  # latest user_len pass_len server_len
+  kivy_log | grep -a 'login_submit' | tail -n 1 \
+    | sed -n 's/.*user_len=\([0-9]*\) pass_len=\([0-9]*\) server_len=\([0-9]*\).*/\1 \2 \3/p'
+}
+login_with() {  # user pass [screenshot-before-submit]
+  local user="$1" pass="$2" shot_name="${3:-}" tries=0 lens got_u got_p
+  local want_u=${#1} want_p=${#2}
+  while [ "$tries" -lt 3 ]; do
+    tries=$((tries+1))
+    disable_imes
+    fill_login "$user" "$pass"
+    hide_keyboard
+    [ -n "$shot_name" ] && shot "$shot_name.png"
+    submit_form || fail "login form did not submit"
+    sleep 2
+    lens=$(submit_lens)
+    got_u=${lens%% *}
+    got_p=$(printf '%s' "$lens" | cut -d' ' -f2)
+    [ -n "$got_u" ] || got_u=0
+    [ -n "$got_p" ] || got_p=0
+    if [ "$got_u" -eq "$want_u" ] && [ "$got_p" -eq "$want_p" ]; then
+      echo "[journey] login input verified user_len=$got_u pass_len=$got_p (attempt $tries)"
+      return 0
+    fi
+    echo "::notice title=journey::login input mismatch user_len=$got_u pass_len=$got_p want_user=$want_u want_pass=$want_p (attempt $tries)"
+    sleep 2
   done
   return 1
 }
@@ -150,13 +203,11 @@ sleep 2
 timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed"
 "$ADB" shell svc wifi disable >/dev/null 2>&1 || true
 "$ADB" shell svc data disable >/dev/null 2>&1 || true
-IME_DISABLED=0
 FIRST_IME=""
 for ime in $("$ADB" shell ime list -s 2>/dev/null | tr -d '\r'); do
   [ -n "$FIRST_IME" ] || FIRST_IME="$ime"
   "$ADB" shell ime disable "$ime" >/dev/null 2>&1 || true
 done
-IME_DISABLED=1
 { echo "first_ime=$FIRST_IME"; "$ADB" shell ime list -s 2>/dev/null | tr -d '\r'; } | tee ime-state.txt
 "$ADB" logcat -c >/dev/null 2>&1 || true
 timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
@@ -225,14 +276,8 @@ PY
 
 # ---- phase 1: first-run admin setup ----
 phase "phase1-bootstrap"
-tap 160 330 1
-typ "$SMOKE_USER"
-ime_off
-tap 160 400 1
-typ "$SMOKE_PASS"
-ime_off
-shot setup-filled.png
-submit_form || fail "setup form did not submit"
+login_with "$SMOKE_USER" "$SMOKE_PASS" setup-filled \
+  || fail "setup input could not be entered and verified"
 SETUP_OK=0
 for _ in $(seq 1 10); do
   sleep 3
@@ -260,18 +305,21 @@ log_has "bootstrap=created" || fail "bootstrap event missing from log"
 # ---- phase 2: forced password change ----
 phase "phase2-forced-change"
 sleep 2
+disable_imes
+hide_keyboard
 tap 160 300 1
 typ "$NEW_PASS"
-ime_off
+hide_keyboard
 tap 160 370 1
 typ "$NEW_PASS"
-ime_off
+hide_keyboard
 shot change-form-filled.png
 CHANGED=0
 ATTEMPT=0
 for coords in "240 460" "230 471" "200 462" "265 462" "250 470"; do
   set -- $coords
   ATTEMPT=$((ATTEMPT+1))
+  hide_keyboard
   tap "$1" "$2" 2
   sleep 10
   pull_db db-changed
@@ -317,9 +365,8 @@ shot logout-login.png
 phase "phase5-old-password"
 DENIED0=$(log_count "login=denied")
 OK0=$(log_count "login=ok")
-fill_login "$SMOKE_USER" "$SMOKE_PASS"
-shot login-old-filled.png
-submit_form || fail "old-password form did not submit"
+login_with "$SMOKE_USER" "$SMOKE_PASS" login-old-filled \
+  || fail "old-password input could not be entered and verified"
 wait_count_gt "login=denied" "$DENIED0" 10 2 || fail "old password was not rejected"
 [ "$(log_count 'login=ok')" -eq "$OK0" ] || fail "old password was accepted"
 sleep 2
@@ -341,8 +388,7 @@ DASH0=$(log_count "screen=dashboard")
 ATTEMPT=0
 for _ in 1 2 3; do
   ATTEMPT=$((ATTEMPT+1))
-  fill_login "$SMOKE_USER" "$NEW_PASS"
-  submit_form || fail "relogin form did not submit"
+  login_with "$SMOKE_USER" "$NEW_PASS" || fail "relogin input could not be entered and verified"
   wait_count_gt "login=ok" "$OK0" 10 2 && break
   sleep 2
   shot "relogin-attempt-${ATTEMPT}.png"
@@ -379,8 +425,7 @@ DASH0=$(log_count "screen=dashboard")
 ATTEMPT=0
 for _ in 1 2 3; do
   ATTEMPT=$((ATTEMPT+1))
-  fill_login "$SMOKE_USER" "$NEW_PASS"
-  submit_form || fail "restart login form did not submit"
+  login_with "$SMOKE_USER" "$NEW_PASS" || fail "restart login input could not be entered and verified"
   wait_count_gt "login=ok" "$OK0" 10 2 && break
   sleep 2
   shot "restart-login-attempt-${ATTEMPT}.png"
