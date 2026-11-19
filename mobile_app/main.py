@@ -6,6 +6,7 @@ from pathlib import Path
 from kivy.clock import Clock
 from kivy.core.text import LabelBase
 from kivy.core.window import Window
+from kivy.logger import Logger
 from kivy.resources import resource_add_path
 from kivymd.app import MDApp
 from kivymd.uix.screenmanager import MDScreenManager
@@ -46,6 +47,9 @@ COLORS = {
 
 
 class ElectroCalcApp(MDApp):
+    def on_start(self):
+        Logger.info("ElectroCalc: app_start")
+
     def build(self):
         self.title = "ElectroCalc"
         self.theme_cls.theme_style = "Light"
@@ -119,6 +123,10 @@ class ElectroCalcApp(MDApp):
     def _finish_async(self, result, callback):
         if result.get("ok") and result.get("must_change"):
             self._pending_login = result
+            Logger.info(
+                "ElectroCalc: password_change_required user=%s"
+                % (result.get("user") or {}).get("username", "")
+            )
             if callback:
                 callback(True, "", True)
             return
@@ -169,10 +177,12 @@ class ElectroCalcApp(MDApp):
 
         user, effective, error = authenticate_local(username, password)
         if user is None:
+            Logger.info("ElectroCalc: login=denied user=%s" % username)
             return {
                 "ok": False,
                 "message": error or "نام کاربری یا رمز عبور نادرست است.",
             }
+        Logger.info("ElectroCalc: login=ok user=%s" % username)
         return {
             "ok": True,
             "user": dict(user),
@@ -215,6 +225,7 @@ class ElectroCalcApp(MDApp):
             token=pending.get("token", ""),
             online=pending.get("online", False),
         )
+        Logger.info("ElectroCalc: password_changed user=%s" % username)
         return True, ""
 
     def cancel_forced_change(self):
@@ -353,6 +364,14 @@ class ElectroCalcApp(MDApp):
         dashboard = self.root.get_screen("dashboard")
         dashboard.set_user(user, self.current_permissions)
         self.root.current = "dashboard"
+        Logger.info(
+            "ElectroCalc: screen=dashboard user=%s superadmin=%s online=%s"
+            % (
+                user.get("username", ""),
+                int(bool(user.get("is_superadmin"))),
+                int(bool(online)),
+            )
+        )
 
     def logout(self) -> None:
         if self.online and self.current_server and self.current_token:
@@ -366,6 +385,7 @@ class ElectroCalcApp(MDApp):
         login.password_field.text = ""
         login.message.text = ""
         self.root.current = "login"
+        Logger.info("ElectroCalc: screen=login action=logout")
 
     # ------------------------------------------------------------------
     # Data access

@@ -20,6 +20,16 @@ MIN_PASSWORD_LENGTH = 8
 _PBKDF2_ROUNDS = 200_000
 
 
+def _log(message):
+    """Emit an auth event to the Kivy log without ever including secrets."""
+    try:
+        from kivy.logger import Logger
+
+        Logger.info(message)
+    except Exception:
+        pass
+
+
 def _verify_password(password: str, stored_hash: str) -> bool:
     if stored_hash.startswith(_BCRYPT_PREFIXES):
         try:
@@ -133,6 +143,7 @@ def bootstrap_local_admin(username: str, password: str):
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with closing(get_connection()) as connection:
         if connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+            _log("ElectroCalc: bootstrap=blocked reason=users_exist")
             return None, set(), "برای این دستگاه از قبل حساب تعریف شده است."
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(users)")
@@ -174,6 +185,7 @@ def bootstrap_local_admin(username: str, password: str):
             "SELECT * FROM users WHERE username = ? LIMIT 1", (username,)
         ).fetchone()
         effective = perm_module.effective_permissions(connection, user)
+    _log(f"ElectroCalc: bootstrap=created user={username}")
     return user, effective, ""
 
 
