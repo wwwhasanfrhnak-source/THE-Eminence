@@ -7,6 +7,7 @@ on:
       - android-build
     paths:
       - "mobile_app/**"
+      - ".github/scripts/**"
       - ".github/workflows/android-release.yml"
 
 concurrency:
