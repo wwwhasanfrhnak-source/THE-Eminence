@@ -319,10 +319,11 @@ jobs:
         env:
           ANDROID_SDK_ROOT: /home/runner/android-sdk
           ANDROID_HOME: /home/runner/android-sdk
+          ANDROID_AVD_HOME: /home/runner/.android/avd
         run: |
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
-          mkdir -p "$SDK"
+          mkdir -p "$SDK" "$ANDROID_AVD_HOME"
           curl -sSL --max-time 900 --retry 3 -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
           mkdir -p "$SDK/cmdline-tools"
@@ -332,11 +333,15 @@ jobs:
           timeout 2400 "$SDKM" --sdk_root="$SDK" "platform-tools" "emulator" \
             "system-images;android-30;google_apis;x86_64" 2>&1 | tr '\r' '\n' | tail -n 40
           echo no | timeout 600 "$SDK/cmdline-tools/latest/bin/avdmanager" create avd \
-            -n final30 -k "system-images;android-30;google_apis;x86_64" --force
+            -n final30 -k "system-images;android-30;google_apis;x86_64" \
+            -p "$ANDROID_AVD_HOME/final30.avd" --force
+          ls -la "$ANDROID_AVD_HOME"
+          test -f "$ANDROID_AVD_HOME/final30.ini"
 
       - name: Boot emulator
         env:
           ANDROID_SDK_ROOT: /home/runner/android-sdk
+          ANDROID_AVD_HOME: /home/runner/.android/avd
         run: |
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"

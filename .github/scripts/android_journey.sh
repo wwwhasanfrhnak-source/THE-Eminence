@@ -99,11 +99,24 @@ timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed
 "$ADB" logcat -c >/dev/null 2>&1 || true
 timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
-for _ in $(seq 1 24); do
+for _ in $(seq 1 36); do
   log_has "app_start" && STARTED=1 && break
   sleep 5
 done
-[ "$STARTED" = "1" ] || fail "app did not start"
+if [ "$STARTED" != "1" ]; then
+  "$ADB" shell pidof "$PKG" | tr -d '\r' | tee startup-pid.txt || true
+  "$ADB" shell pm list packages 2>/dev/null | grep -F "$PKG" | tee -a startup-pid.txt || true
+  timeout 60 "$ADB" logcat -d -b crash > startup-crash.txt 2>&1 || true
+  timeout 60 "$ADB" logcat -d > startup-logcat.txt 2>&1 || true
+  {
+    echo "startup diagnostic: pid=$(cat startup-pid.txt | tr '\n' ' ')"
+    tail -n 25 startup-crash.txt
+    grep -aE "python|Kivy|SDL|electrocalc|FATAL|AndroidRuntime" startup-logcat.txt | tail -n 40
+  } | cut -c1-240 | while IFS= read -r line; do
+    echo "::error title=startup::${line}"
+  done
+  fail "app did not start"
+fi
 sleep 8
 shot emulator-startup.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid.txt || true

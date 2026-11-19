@@ -282,6 +282,9 @@ jobs:
             launch.txt
             pid.txt
             activities.txt
+            startup-pid.txt
+            startup-crash.txt
+            startup-logcat.txt
             logcat.txt
             logcat-crash.txt
             buildozer-emulator.log
