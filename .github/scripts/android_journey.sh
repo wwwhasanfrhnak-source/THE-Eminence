@@ -195,11 +195,14 @@ typ "$NEW_PASS"
 ime_off
 shot change-form-filled.png
 CHANGED=0
-for coords in "240 460" "200 462" "265 462" "160 460"; do
+ATTEMPT=0
+for coords in "240 460" "230 471" "200 462" "265 462" "250 470"; do
   set -- $coords
+  ATTEMPT=$((ATTEMPT+1))
   tap "$1" "$2" 2
   sleep 10
   pull_db db-changed
+  shot "change-attempt-${ATTEMPT}.png"
   if [ "$(json_get db-changed.json flags)" = "0" ]; then CHANGED=1; break; fi
 done
 shot dashboard.png

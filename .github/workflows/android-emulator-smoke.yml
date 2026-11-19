@@ -238,6 +238,32 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Embed screenshots as annotations
+        if: always()
+        run: |
+          python3 -m pip install --quiet pillow >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          import base64, io, pathlib, sys
+          try:
+              from PIL import Image
+          except Exception as exc:
+              print(f"screenshot embedding skipped: {exc}")
+              sys.exit(0)
+          for name in ("setup-filled", "change-dialog", "change-form-filled", "change-attempt-1",
+                       "change-attempt-2", "change-attempt-3", "change-attempt-4", "change-attempt-5",
+                       "dashboard", "login-old-filled", "login-old-rejected", "dashboard-relogin",
+                       "restart-login", "dashboard-restart", "splash-check"):
+              path = pathlib.Path(f"{name}.png")
+              if not path.is_file():
+                  continue
+              image = Image.open(path).convert("RGB")
+              image.thumbnail((150, 300))
+              buffer = io.BytesIO()
+              image.save(buffer, "JPEG", quality=35)
+              payload = base64.b64encode(buffer.getvalue()).decode()
+              print(f"::error title=shot:{name}::{payload}")
+          PY
+
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
