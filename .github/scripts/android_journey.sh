@@ -45,7 +45,10 @@ pull_db() {
   echo "$1: $(cat "$1.json")" | tee -a db-timeline.txt
 }
 applog() { timeout 60 "$ADB" logcat -d -s python 2>/dev/null | grep -a "ElectroCalc:" || true; }
-log_has() { applog | grep -q -- "$1"; }
+kivy_log() {
+  timeout 60 "$ADB" shell "cat /data/user/0/$PKG/files/app/.kivy/logs/*.txt 2>/dev/null" 2>/dev/null | tr -d '\r'
+}
+log_has() { applog | grep -q -- "$1" || kivy_log | grep -q -- "$1"; }
 json_get() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
 
 cat > db_state.py <<'PY'
@@ -107,6 +110,9 @@ for _ in $(seq 1 735); do
   if [ $((TICK % 5)) -eq 0 ]; then
     echo "$(date +%T) pid=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')" >> startup-pid-timeline.txt
   fi
+  if [ $((TICK % 150)) -eq 0 ]; then
+    echo "$(date +%T) kivy_lines=$(kivy_log | wc -l) python_lines=$(applog | wc -l)" >> startup-samples.txt
+  fi
   sleep 4
 done
 : > startup-wait.txt
@@ -116,12 +122,16 @@ if [ "$STARTED" != "1" ]; then
   "$ADB" shell pm list packages 2>/dev/null | grep -F "$PKG" | tee -a startup-pid.txt || true
   timeout 60 "$ADB" logcat -d -b crash > startup-crash.txt 2>&1 || true
   timeout 60 "$ADB" logcat -d > startup-logcat.txt 2>&1 || true
+  timeout 60 "$ADB" shell dumpsys activity activities 2>/dev/null | grep -aE "mResumedActivity|mCurrentFocus|electrocalc" | tee startup-activity.txt || true
+  kivy_log > startup-kivy.log 2>/dev/null || true
   {
     echo "startup diagnostic: pid=$(cat startup-pid.txt | tr '\n' ' ')"
     cat startup-wait.txt 2>/dev/null || true
-    tail -n 12 startup-pid-timeline.txt 2>/dev/null || true
-    tail -n 25 startup-crash.txt
-    grep -aE "python|Kivy|SDL|electrocalc|FATAL|AndroidRuntime" startup-logcat.txt | tail -n 40
+    echo "logcat-python-lines=$(grep -ac 'python' startup-logcat.txt || true) kivy-log-lines=$(wc -l < startup-kivy.log 2>/dev/null || echo 0)"
+    tail -n 10 startup-activity.txt 2>/dev/null || true
+    tail -n 30 startup-kivy.log 2>/dev/null || true
+    tail -n 20 startup-crash.txt
+    grep -aE "python|Kivy|SDL|electrocalc|FATAL|AndroidRuntime" startup-logcat.txt | tail -n 30
   } | cut -c1-240 | while IFS= read -r line; do
     echo "::error title=startup::${line}"
   done
