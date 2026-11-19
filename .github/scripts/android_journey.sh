@@ -104,7 +104,7 @@ timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
 START_TS=$(date +%s)
 TICK=0
-for _ in $(seq 1 735); do
+for _ in $(seq 1 375); do
   log_has "app_start" && STARTED=1 && break
   TICK=$((TICK+1))
   if [ $((TICK % 5)) -eq 0 ]; then
