@@ -246,7 +246,7 @@ jobs:
           sleep 5
           "$ADB" shell cp /data/user/0/com.electrocalc.app/files/electrocalc.db /sdcard/ec.db >/dev/null 2>&1 || true
           timeout 120 "$ADB" pull /sdcard/ec.db ec.db >/dev/null 2>&1 || true
-          python3 - <<'PY' 2>&1 | tee db-check.txt || true
+          python3 - <<'PY' 2>&1 | tee db-check.txt
           import sqlite3, sys
           try:
               connection = sqlite3.connect("ec.db")
@@ -269,31 +269,39 @@ jobs:
               print(f"superadmin={row[2] if row else ''} active={row[3] if row else ''} "
                     f"status={row[4] if row else ''} android={row[5] if row else ''}")
               print(f"must_change_flags={flags}")
+              assert users == 1, "bootstrap did not create exactly one user"
+              assert scheme == "bcrypt", "password is not stored as bcrypt"
+              assert row[2] == 1, "bootstrap user is not a superadmin"
+              assert row[3] == 1 and row[4] == "active", "bootstrap user is not active"
+              assert row[5] == 1, "bootstrap user cannot log in on android"
+              assert flags == 1, "forced password change flag missing"
           except Exception as exc:
-              print("db-check error:", type(exc).__name__)
+              print("db-check failed:", type(exc).__name__, exc)
               sys.exit(1)
           PY
+          DB_CHECK_STATUS=${PIPESTATUS[0]}
+          echo "db-check exit: $DB_CHECK_STATUS" | tee -a db-check.txt
 
-          # Complete the forced password change on the dialog (best effort;
-          # the same flow is covered by the desktop Kivy UI test).
+          # Complete the forced password change on the dialog; the database
+          # state is asserted afterwards so a skipped change fails the run.
           "$ADB" shell input tap 160 300 >/dev/null 2>&1 || true
           sleep 1
           "$ADB" shell input text "$NEW_PASS" >/dev/null 2>&1 || true
           "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
           sleep 1
-          "$ADB" shell input tap 160 360 >/dev/null 2>&1 || true
+          "$ADB" shell input tap 160 370 >/dev/null 2>&1 || true
           sleep 1
           "$ADB" shell input text "$NEW_PASS" >/dev/null 2>&1 || true
           "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
           sleep 1
-          "$ADB" shell input tap 280 445 >/dev/null 2>&1 || true
-          sleep 10
-          timeout 60 "$ADB" exec-out screencap -p > after-change.png || true
+          "$ADB" shell input tap 240 460 >/dev/null 2>&1 || true
+          sleep 12
+          timeout 60 "$ADB" exec-out screencap -p > dashboard.png || true
           "$ADB" shell pidof com.electrocalc.app | tr -d '\r' | tee pid-after-change.txt || true
           "$ADB" shell cp /data/user/0/com.electrocalc.app/files/electrocalc.db /sdcard/ec2.db >/dev/null 2>&1 || true
           timeout 120 "$ADB" pull /sdcard/ec2.db ec2.db >/dev/null 2>&1 || true
-          python3 - <<'PY' 2>&1 | tee db-check2.txt || true
-          import sqlite3
+          python3 - <<'PY' 2>&1 | tee db-check2.txt
+          import sqlite3, sys
           try:
               connection = sqlite3.connect("ec2.db")
               changed = connection.execute(
@@ -305,14 +313,21 @@ jobs:
               ).fetchone()[0]
               print(f"must_change_flags={flags}")
               print(f"hash_scheme={'bcrypt' if changed and str(changed[0]).startswith('$2') else 'other'}")
+              assert str(changed[0]).startswith("$2"), "password hash is not bcrypt after change"
+              assert flags == 0, "forced password change did not complete"
           except Exception as exc:
-              print("db-check2 error:", type(exc).__name__)
+              print("db-check2 failed:", type(exc).__name__, exc)
+              sys.exit(1)
           PY
+          DB_CHECK2_STATUS=${PIPESTATUS[0]}
+          echo "db-check2 exit: $DB_CHECK2_STATUS" | tee -a db-check2.txt
 
           timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
           timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true
-          ls -l emulator-startup.png emulator-relaunch.png change-dialog.png 2>/dev/null || true
+          ls -l emulator-startup.png emulator-relaunch.png change-dialog.png dashboard.png 2>/dev/null || true
           test -s pid.txt
+          test "$DB_CHECK_STATUS" = 0
+          test "$DB_CHECK2_STATUS" = 0
 
       - name: Publish diagnostics
         if: always()
@@ -351,7 +366,7 @@ jobs:
             emulator-relaunch.png
             setup-filled.png
             change-dialog.png
-            after-change.png
+            dashboard.png
             focus.txt
             relaunch.txt
             pid-relaunch.txt
