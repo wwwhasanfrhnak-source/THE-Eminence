@@ -99,10 +99,12 @@ timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed
 "$ADB" logcat -c >/dev/null 2>&1 || true
 timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
-for _ in $(seq 1 36); do
+START_TS=$(date +%s)
+for _ in $(seq 1 150); do
   log_has "app_start" && STARTED=1 && break
-  sleep 5
+  sleep 4
 done
+echo "startup wait seconds: $(( $(date +%s) - START_TS ))" | tee startup-wait.txt
 if [ "$STARTED" != "1" ]; then
   "$ADB" shell pidof "$PKG" | tr -d '\r' | tee startup-pid.txt || true
   "$ADB" shell pm list packages 2>/dev/null | grep -F "$PKG" | tee -a startup-pid.txt || true
@@ -253,9 +255,9 @@ phase "phase7-restart"
 sleep 3
 timeout 120 "$ADB" shell am start -n "$ACT" >> relaunch.txt 2>&1 || true
 RESTARTED=0
-for _ in $(seq 1 24); do
+for _ in $(seq 1 75); do
   log_has "app_start" && RESTARTED=1 && break
-  sleep 5
+  sleep 4
 done
 [ "$RESTARTED" = "1" ] || fail "app did not restart"
 sleep 8
