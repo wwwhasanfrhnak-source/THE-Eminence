@@ -44,13 +44,20 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            autoconf automake libtool libtool-bin pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
-            cmake libffi-dev libssl-dev libltdl-dev \
-            libpulse0 libxcb1 libx11-6 libxkbcommon0 \
-            git zip unzip openssl
+          export DEBIAN_FRONTEND=noninteractive
+          APT_OPTS="-o Acquire::Retries=6 -o Acquire::http::Timeout=30"
+          for attempt in 1 2 3; do
+            sudo apt-get $APT_OPTS update && break || { echo "apt update retry $attempt"; sleep 15; }
+          done
+          for attempt in 1 2 3; do
+            sudo apt-get $APT_OPTS install -y --no-install-recommends \
+              autoconf automake libtool libtool-bin pkg-config \
+              zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
+              cmake libffi-dev libssl-dev libltdl-dev \
+              libpulse0 libxcb1 libx11-6 libxkbcommon0 \
+              git zip unzip openssl && break || { echo "apt install retry $attempt"; sleep 15; }
+          done
+          dpkg -s libpulse0 >/dev/null && echo "system dependencies ready"
 
       - name: Install Buildozer
         run: |
