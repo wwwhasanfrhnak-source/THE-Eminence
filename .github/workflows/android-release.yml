@@ -291,7 +291,7 @@ jobs:
     name: Install final APK and verify admin journey
     needs: release
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     steps:
       - name: Checkout
@@ -333,12 +333,12 @@ jobs:
           yes | timeout 600 "$SDKM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
           timeout 2400 "$SDKM" --sdk_root="$SDK" "platform-tools" "emulator" \
             "build-tools;34.0.0" "platforms;android-34" \
-            "system-images;android-30;google_apis;x86_64" 2>&1 | tr '\r' '\n' | tail -n 40
+            "system-images;android-30;default;x86_64" 2>&1 | tr '\r' '\n' | tail -n 40
           echo no | timeout 600 "$SDK/cmdline-tools/latest/bin/avdmanager" create avd \
-            -n final30 -k "system-images;android-30;google_apis;x86_64" \
+            -n final30 -k "system-images;android-30;default;x86_64" \
             -p "$ANDROID_AVD_HOME/final30.avd" --force
           INI="$ANDROID_AVD_HOME/final30.avd/config.ini"
-          sed -i "s|^image\.sysdir\.1=.*|image.sysdir.1=$SDK/system-images/android-30/google_apis/x86_64/|" "$INI"
+          sed -i "s|^image\.sysdir\.1=.*|image.sysdir.1=$SDK/system-images/android-30/default/x86_64/|" "$INI"
           sed -i -e 's/^hw\.ramSize=.*/hw.ramSize=4096/' -e 's/^hw\.cpu\.ncore=.*/hw.cpu.ncore=4/' "$INI"
           grep -E '^(image\.sysdir|hw\.ramSize|hw\.cpu\.ncore)' "$INI"
           ls -la "$ANDROID_AVD_HOME"
@@ -365,8 +365,10 @@ jobs:
           fi
           "$SDK/emulator/emulator" -avd final30 -no-window -gpu swiftshader_indirect \
             -noaudio -no-boot-anim -no-snapshot -camera-back none -no-metrics \
+            -cores 4 -memory 4096 \
             > emulator.log 2>&1 &
           EMULATOR_PID=$!
+          echo "::notice title=kvm::$(ls -l /dev/kvm 2>&1 | tr '\n' ' ')"
           "$ADB" start-server >/dev/null 2>&1 || true
           BOOTED=0
           for _ in $(seq 1 180); do
@@ -380,8 +382,7 @@ jobs:
           done
           echo "booted=$BOOTED" | tee boot.txt
           "$ADB" devices -l | tee devices.txt
-          if [ "$BOOTED" != "1" ]; then
-            grep -E '^(AvdId|image\.sysdir|hw\.cpu)' "$ANDROID_AVD_HOME/final30.avd/config.ini" 2>/dev/null | while IFS= read -r line; do
+          if [ "$BOOTED" != "1" ]; then            grep -E '^(AvdId|image\.sysdir|hw\.cpu)' "$ANDROID_AVD_HOME/final30.avd/config.ini" 2>/dev/null | while IFS= read -r line; do
               echo "::error title=avd-config::${line}"
             done
             tail -n 40 emulator.log | cut -c1-240 | while IFS= read -r line; do
@@ -389,6 +390,10 @@ jobs:
             done
           fi
           test "$BOOTED" = "1"
+          for prop in window_animation_scale transition_animation_scale animator_duration_scale; do
+            "$ADB" shell settings put global "$prop" 0 >/dev/null 2>&1 || true
+          done
+          sleep 30
 
       - name: Verify final APK manifest and signature
         env:
