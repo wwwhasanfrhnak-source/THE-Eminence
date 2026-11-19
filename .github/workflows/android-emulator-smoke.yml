@@ -256,18 +256,22 @@ jobs:
           except Exception as exc:
               print(f"screenshot embedding skipped: {exc}")
               sys.exit(0)
-          for name in ("setup-filled", "change-dialog", "change-form-filled", "change-attempt-1",
-                       "change-attempt-2", "change-attempt-3", "change-attempt-4", "change-attempt-5",
+          for name in ("emulator-startup", "setup-filled", "change-dialog", "change-form-filled",
+                       "change-attempt-1", "change-attempt-2", "change-attempt-3",
+                       "change-attempt-4", "change-attempt-5",
                        "dashboard", "login-old-filled", "login-old-rejected", "dashboard-relogin",
-                       "restart-login", "dashboard-restart", "login-keyboard", "login-keyboard-closed",
-                       "splash-check"):
+                       "relogin-attempt-1", "relogin-attempt-2", "relogin-attempt-3",
+                       "restart-login", "dashboard-restart",
+                       "restart-login-attempt-1", "restart-login-attempt-2",
+                       "restart-login-attempt-3",
+                       "login-keyboard", "login-keyboard-closed", "splash-check"):
               path = pathlib.Path(f"{name}.png")
               if not path.is_file():
                   continue
               image = Image.open(path).convert("RGB")
-              image.thumbnail((150, 300))
+              image.thumbnail((110, 220))
               buffer = io.BytesIO()
-              image.save(buffer, "JPEG", quality=35)
+              image.save(buffer, "JPEG", quality=32)
               payload = base64.b64encode(buffer.getvalue()).decode()
               print(f"::error title=shot:{name}::{payload}")
           PY

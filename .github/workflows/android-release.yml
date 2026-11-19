@@ -439,6 +439,38 @@ jobs:
           cp badging.txt signature.txt sha256.txt size.txt boot.txt devices.txt evidence/ 2>/dev/null || true
           cp emulator.log evidence/ 2>/dev/null || true
 
+      - name: Embed journey screenshots as annotations
+        if: always()
+        run: |
+          python3 -m pip install --quiet pillow >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          import base64, io, pathlib, sys
+          try:
+              from PIL import Image
+          except Exception as exc:
+              print(f"screenshot embedding skipped: {exc}")
+              sys.exit(0)
+          base = pathlib.Path("evidence")
+          for name in ("emulator-startup", "setup-filled", "change-dialog", "change-form-filled",
+                       "change-attempt-1", "change-attempt-2", "change-attempt-3",
+                       "change-attempt-4", "change-attempt-5",
+                       "dashboard", "login-old-filled", "login-old-rejected", "dashboard-relogin",
+                       "relogin-attempt-1", "relogin-attempt-2", "relogin-attempt-3",
+                       "restart-login", "dashboard-restart",
+                       "restart-login-attempt-1", "restart-login-attempt-2",
+                       "restart-login-attempt-3",
+                       "login-keyboard", "login-keyboard-closed"):
+              path = base / f"{name}.png"
+              if not path.is_file():
+                  continue
+              image = Image.open(path).convert("RGB")
+              image.thumbnail((110, 220))
+              buffer = io.BytesIO()
+              image.save(buffer, "JPEG", quality=32)
+              payload = base64.b64encode(buffer.getvalue()).decode()
+              print(f"::error title=shot:{name}::{payload}")
+          PY
+
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4

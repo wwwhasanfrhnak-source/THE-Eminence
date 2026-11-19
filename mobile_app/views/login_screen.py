@@ -1,5 +1,6 @@
 """Login screen: light ElectroCalc theme, RTL and asynchronous sign-in."""
 
+from kivy.logger import Logger
 from kivy.uix.scrollview import ScrollView
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDFlatButton, MDRaisedButton
@@ -156,6 +157,16 @@ class LoginScreen(MDScreen):
             height="54dp",
         )
         self.password_field.bind(on_text_validate=self._submit)
+        self.username_field.bind(
+            on_focus=lambda _field, value: self._log_focus(
+                "username", value
+            )
+        )
+        self.password_field.bind(
+            on_focus=lambda _field, value: self._log_focus(
+                "password", value
+            )
+        )
         self.server_field = MDTextField(
             hint_text=rtl("آدرس سرور دفتر (اختیاری)"),
             icon_left="server-network",
@@ -241,12 +252,20 @@ class LoginScreen(MDScreen):
             app = App.get_running_app()
         return app
 
+    def _log_focus(self, name, value):
+        if value:
+            Logger.info("ElectroCalc: focus=%s" % name)
+
     def _submit(self, *_args):
         if self._busy:
             return
         username = self.username_field.text.strip()
         password = self.password_field.text
         server = self.server_field.text.strip()
+        Logger.info(
+            "ElectroCalc: login_submit user_len=%d pass_len=%d server_len=%d"
+            % (len(username), len(password), len(server))
+        )
         if not username or not password:
             self.message.text = rtl_lines("نام کاربری و رمز عبور را وارد کنید.")
             return

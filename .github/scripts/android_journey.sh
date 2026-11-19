@@ -17,13 +17,18 @@ cd "$OUT"
 fail() {
   echo "::error title=journey::FAILED: $*"
   echo "[journey] FAILED: $*"
+  echo "::error title=journey-counts::submit=$(log_count 'login_submit') ok=$(log_count 'login=ok') denied=$(log_count 'login=denied') dash=$(log_count 'screen=dashboard') start=$(log_count 'app_start') focus_user=$(log_count 'focus=username') focus_pass=$(log_count 'focus=password')"
+  pull_db db-failure >/dev/null 2>&1 || true
   # Surface the failure context as annotations so diagnosis works even when
   # logs and artifacts are unavailable.
-  [ -f db-timeline.txt ] && tail -n 8 db-timeline.txt | cut -c1-240 | while IFS= read -r line; do
+  [ -f db-timeline.txt ] && tail -n 5 db-timeline.txt | cut -c1-240 | while IFS= read -r line; do
     echo "::error title=journey-db::${line}"
   done
-  applog | tail -n 12 | cut -c1-240 | while IFS= read -r line; do
+  applog | tail -n 5 | cut -c1-240 | while IFS= read -r line; do
     echo "::error title=journey-log::${line}"
+  done
+  kivy_log | tail -n 10 | cut -c1-240 | while IFS= read -r line; do
+    echo "::error title=journey-klog::${line}"
   done
   exit 1
 }
@@ -41,6 +46,30 @@ clear_field() {
   sleep 1
 }
 fill_field() { tap "$1" "$2" 1; clear_field; typ "$3"; ime_off; }
+fill_login() {
+  # The login screen keeps the username across attempts; refill both anyway
+  # so a stale value or a lost keystroke cannot silently break the attempt.
+  fill_field 160 330 "$1"
+  fill_field 160 400 "$2"
+}
+submit_form() {
+  # Pressing Enter inside the password field triggers on_text_validate, which
+  # is independent of the button position; fall back to tapping the button.
+  local s0
+  s0=$(log_count "login_submit")
+  tap 160 400 1
+  "$ADB" shell input keyevent 66 >/dev/null 2>&1 || true
+  for _ in 1 2 3; do
+    [ "$(log_count 'login_submit')" -gt "$s0" ] && return 0
+    sleep 2
+  done
+  for coords in "160 585" "160 575" "160 595" "160 600" "160 570"; do
+    set -- $coords
+    tap "$1" "$2" 2
+    [ "$(log_count 'login_submit')" -gt "$s0" ] && return 0
+  done
+  return 1
+}
 pull_db() {
   "$ADB" shell cp "/data/user/0/$PKG/files/electrocalc.db" "/sdcard/$1.db" >/dev/null 2>&1 || true
   timeout 120 "$ADB" pull "/sdcard/$1.db" "$1.db" >/dev/null 2>&1 || true
@@ -49,9 +78,23 @@ pull_db() {
 }
 applog() { timeout 60 "$ADB" logcat -d -s python 2>/dev/null | grep -a "ElectroCalc:" || true; }
 kivy_log() {
-  timeout 60 "$ADB" shell "cat /data/user/0/$PKG/files/app/.kivy/logs/*.txt 2>/dev/null" 2>/dev/null | tr -d '\r'
+  timeout 90 "$ADB" shell "cat /data/user/0/$PKG/files/app/.kivy/logs/*.txt /data/user/0/$PKG/files/app/logs/*.txt 2>/dev/null" 2>/dev/null | tr -d '\r'
 }
-log_has() { applog | grep -q -- "$1" || kivy_log | grep -q -- "$1"; }
+log_has() { kivy_log | grep -q -- "$1" || applog | grep -q -- "$1"; }
+log_count() {
+  local n
+  n=$(kivy_log | grep -ac -- "$1")
+  [ -n "$n" ] || n=0
+  echo "$n"
+}
+wait_count_gt() {  # needle baseline tries [sleep]
+  local needle="$1" base="$2" tries="${3:-10}" pause="${4:-2}" i
+  for i in $(seq 1 "$tries"); do
+    [ "$(log_count "$needle")" -gt "$base" ] && return 0
+    sleep "$pause"
+  done
+  return 1
+}
 json_get() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
 
 cat > db_state.py <<'PY'
@@ -151,6 +194,10 @@ fi
 sleep 8
 shot emulator-startup.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid.txt || true
+{
+  echo "klog_app_start=$(log_count 'app_start') logcat_app_start=$(applog | grep -ac 'app_start') klog_lines=$(kivy_log | wc -l)"
+} | tee log-source.txt
+tail -n 1 log-source.txt | while IFS= read -r line; do echo "::notice title=logsource::${line}"; done
 
 # ---- phase 0: fresh device database ----
 phase "phase0-fresh-db"
@@ -171,14 +218,14 @@ tap 160 400 1
 typ "$SMOKE_PASS"
 ime_off
 shot setup-filled.png
+submit_form || fail "setup form did not submit"
 SETUP_OK=0
-for coords in "160 585" "160 600" "160 570"; do
-  set -- $coords
-  tap "$1" "$2" 2
-  sleep 12
+for _ in $(seq 1 10); do
+  sleep 3
   pull_db db-bootstrap
   if [ "$(json_get db-bootstrap.json users)" = "1" ]; then SETUP_OK=1; break; fi
 done
+sleep 2
 shot change-dialog.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid-after-setup.txt || true
 [ "$SETUP_OK" = "1" ] || fail "admin creation did not save"
@@ -198,6 +245,7 @@ log_has "bootstrap=created" || fail "bootstrap event missing from log"
 
 # ---- phase 2: forced password change ----
 phase "phase2-forced-change"
+sleep 2
 tap 160 300 1
 typ "$NEW_PASS"
 ime_off
@@ -253,14 +301,16 @@ shot logout-login.png
 
 # ---- phase 5: old temporary password must be refused ----
 phase "phase5-old-password"
-fill_field 160 330 "$SMOKE_USER"
-fill_field 160 400 "$SMOKE_PASS"
+DENIED0=$(log_count "login=denied")
+OK0=$(log_count "login=ok")
+fill_login "$SMOKE_USER" "$SMOKE_PASS"
 shot login-old-filled.png
-tap 160 585 2
-sleep 10
+submit_form || fail "old-password form did not submit"
+wait_count_gt "login=denied" "$DENIED0" 10 2 || fail "old password was not rejected"
+[ "$(log_count 'login=ok')" -eq "$OK0" ] || fail "old password was accepted"
+sleep 2
 shot login-old-rejected.png
 pull_db db-old-rejected
-log_has "login=denied" || fail "old password was not rejected"
 python3 - <<'PY' || fail "phase5: rejected-login database assertions failed"
 import json
 before = json.load(open("db-changed.json"))
@@ -272,32 +322,58 @@ PY
 
 # ---- phase 6: login with the new password ----
 phase "phase6-relogin"
-fill_field 160 400 "$NEW_PASS"
-tap 160 585 2
-sleep 12
+OK0=$(log_count "login=ok")
+DASH0=$(log_count "screen=dashboard")
+ATTEMPT=0
+for _ in 1 2 3; do
+  ATTEMPT=$((ATTEMPT+1))
+  fill_login "$SMOKE_USER" "$NEW_PASS"
+  submit_form || fail "relogin form did not submit"
+  wait_count_gt "login=ok" "$OK0" 10 2 && break
+  sleep 2
+  shot "relogin-attempt-${ATTEMPT}.png"
+done
+[ "$(log_count 'login=ok')" -gt "$OK0" ] || fail "relogin did not authenticate (attempts=${ATTEMPT})"
+wait_count_gt "screen=dashboard" "$DASH0" 10 2 || fail "relogin did not reach dashboard"
+sleep 3
 shot dashboard-relogin.png
-DASH_COUNT=$(applog | grep -c "screen=dashboard" || true)
-echo "dashboard events after relogin: $DASH_COUNT"
-[ "$DASH_COUNT" -ge 2 ] || fail "relogin did not reach dashboard"
-log_has "login=ok" || fail "successful login event missing"
+echo "dashboard events after relogin: $(log_count 'screen=dashboard')"
 
 # ---- phase 7: restart and persistence ----
 phase "phase7-restart"
 "$ADB" shell am force-stop "$PKG" >/dev/null 2>&1 || true
-sleep 3
+for _ in $(seq 1 10); do
+  [ -z "$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')" ] && break
+  sleep 1
+done
 timeout 120 "$ADB" shell am start -n "$ACT" >> relaunch.txt 2>&1 || true
+STARTS0=$(log_count "app_start")
 RESTARTED=0
 for _ in $(seq 1 150); do
-  log_has "app_start" && RESTARTED=1 && break
+  NEW_PID=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')
+  if [ -n "$NEW_PID" ] && [ "$(log_count 'app_start')" -gt "$STARTS0" ]; then
+    RESTARTED=1
+    break
+  fi
   sleep 4
 done
 [ "$RESTARTED" = "1" ] || fail "app did not restart"
 sleep 8
 shot restart-login.png
-fill_field 160 330 "$SMOKE_USER"
-fill_field 160 400 "$NEW_PASS"
-tap 160 585 2
-sleep 12
+OK0=$(log_count "login=ok")
+DASH0=$(log_count "screen=dashboard")
+ATTEMPT=0
+for _ in 1 2 3; do
+  ATTEMPT=$((ATTEMPT+1))
+  fill_login "$SMOKE_USER" "$NEW_PASS"
+  submit_form || fail "restart login form did not submit"
+  wait_count_gt "login=ok" "$OK0" 10 2 && break
+  sleep 2
+  shot "restart-login-attempt-${ATTEMPT}.png"
+done
+[ "$(log_count 'login=ok')" -gt "$OK0" ] || fail "login after restart did not authenticate"
+wait_count_gt "screen=dashboard" "$DASH0" 10 2 || fail "login after restart did not reach dashboard"
+sleep 3
 shot dashboard-restart.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid-final.txt || true
 pull_db db-final
@@ -305,9 +381,7 @@ PID_BEFORE=$(tr -d '\r\n' < pid-after-change.txt || true)
 PID_AFTER=$(tr -d '\r\n' < pid-final.txt || true)
 echo "pids before=$PID_BEFORE after=$PID_AFTER"
 [ -n "$PID_BEFORE" ] && [ -n "$PID_AFTER" ] && [ "$PID_BEFORE" != "$PID_AFTER" ] || fail "app did not restart"
-DASH_COUNT=$(applog | grep -c "screen=dashboard" || true)
-echo "dashboard events after restart: $DASH_COUNT"
-[ "$DASH_COUNT" -ge 3 ] || fail "restart login did not reach dashboard"
+echo "dashboard events after restart: $(log_count 'screen=dashboard')"
 python3 - <<'PY' || fail "phase7: restart persistence assertions failed"
 import json, os
 changed = json.load(open("db-changed.json"))
@@ -321,10 +395,10 @@ for secret in (os.environ.get("SMOKE_PASS", ""), os.environ.get("NEW_PASS", ""))
 print("phase7 ok: single admin persisted across restart, hashed, flag cleared")
 PY
 
-# ---- phase 8: ordered log evidence ----
+# ---- phase 8: ordered log evidence (Kivy's persistent log file) ----
 phase "phase8-log-order"
-applog > app-log.txt
-grep -c "ElectroCalc:" app-log.txt | tee log-events.txt || true
+kivy_log > app-log.txt
+grep -ac "ElectroCalc:" app-log.txt | tee log-events.txt || true
 python3 - <<'PY' || fail "phase8: ordered log assertions failed"
 lines = open("app-log.txt", encoding="utf-8", errors="replace").read().splitlines()
 
@@ -345,13 +419,15 @@ denied = first("login=denied")
 login_ok = first("login=ok")
 dashboard_last = positions("screen=dashboard")[-1]
 starts = len(positions("app_start"))
+submits = len(positions("login_submit"))
 
 assert bootstrap < forced < changed, (bootstrap, forced, changed)
 assert forced < dashboard_first < logout, (forced, dashboard_first, logout)
 assert logout < denied < login_ok < dashboard_last, (logout, denied, login_ok, dashboard_last)
 assert starts >= 2, f"expected two app starts, saw {starts}"
+assert submits >= 3, f"expected at least three form submits, saw {submits}"
 assert len(positions("screen=dashboard")) >= 3, "expected three dashboard entries"
-print(f"phase8 ok: ordered events, {starts} app starts, "
+print(f"phase8 ok: ordered events, {starts} app starts, {submits} submits, "
       f"{len(positions('screen=dashboard'))} dashboard entries")
 PY
 
