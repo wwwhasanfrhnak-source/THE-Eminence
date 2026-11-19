@@ -362,7 +362,7 @@ jobs:
 
           # ---- phase 4: logout ----
           LOGGED_OUT=0
-          for coords in "288 37" "292 40" "296 37" "283 40" "240 37"; do
+          for coords in "284 52" "290 52" "280 52" "296 52" "240 52" "250 48" "288 40" "300 45" "236 56" "288 56" "304 52" "268 52"; do
             set -- $coords
             tap "$1" "$2" 3
             if log_has "action=logout"; then LOGGED_OUT=1; break; fi
@@ -440,24 +440,32 @@ jobs:
           grep -c "ElectroCalc:" app-log.txt | tee log-events.txt || true
           python3 - <<'PY'
           lines = open("app-log.txt", encoding="utf-8", errors="replace").read().splitlines()
+
+          def positions(needle):
+              return [i for i, line in enumerate(lines) if needle in line]
+
           def first(needle):
-              for index, line in enumerate(lines):
-                  if needle in line:
-                      return index
-              raise AssertionError(f"missing log event: {needle}")
-          order = [
-              "bootstrap=created",
-              "password_change_required",
-              "password_changed",
-              "screen=dashboard",
-              "action=logout",
-              "login=denied",
-              "login=ok",
-              "app_start",
-          ]
-          positions = [first(needle) for needle in order]
-          assert positions == sorted(positions), f"unexpected event order: {positions}"
-          print("phase8 ok: ordered auth events present")
+              found = positions(needle)
+              assert found, f"missing log event: {needle}"
+              return found[0]
+
+          bootstrap = first("bootstrap=created")
+          forced = first("password_change_required")
+          changed = first("password_changed")
+          dashboard_first = first("screen=dashboard")
+          logout = first("action=logout")
+          denied = first("login=denied")
+          login_ok = first("login=ok")
+          dashboard_last = positions("screen=dashboard")[-1]
+          starts = len(positions("app_start"))
+
+          assert bootstrap < forced < changed, (bootstrap, forced, changed)
+          assert forced < dashboard_first < logout, (forced, dashboard_first, logout)
+          assert logout < denied < login_ok < dashboard_last, (logout, denied, login_ok, dashboard_last)
+          assert starts >= 2, f"expected two app starts, saw {starts}"
+          assert len(positions("screen=dashboard")) >= 3, "expected three dashboard entries"
+          print(f"phase8 ok: ordered events, {starts} app starts, "
+                f"{len(positions('screen=dashboard'))} dashboard entries")
           PY
 
           timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
