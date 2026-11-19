@@ -325,8 +325,23 @@ jobs:
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
           mkdir -p "$SDK" "$ANDROID_AVD_HOME"
-          curl -sSL --max-time 900 --retry 3 -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          ZIP=/tmp/cmdline-tools.zip
+          for attempt in 1 2 3 4; do
+            rm -f "$ZIP"
+            if curl -4 --http1.1 -sSL --max-time 900 --retry 2 \
+                 -o "$ZIP" https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+               && unzip -tq "$ZIP" >/dev/null 2>&1; then
+              break
+            fi
+            echo "cmdline-tools download retry $attempt"
+            sleep 10
+          done
+          if [ ! -s "$ZIP" ] || ! unzip -tq "$ZIP" >/dev/null 2>&1; then
+            echo "::error title=sdk::cmdline-tools download failed"
+            exit 1
+          fi
+          rm -rf /tmp/cmdline-tools
+          unzip -q "$ZIP" -d /tmp/cmdline-tools
           mkdir -p "$SDK/cmdline-tools"
           mv /tmp/cmdline-tools/cmdline-tools "$SDK/cmdline-tools/latest"
           SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
@@ -344,8 +359,7 @@ jobs:
             -p "$ANDROID_AVD_HOME/final30.avd" --force
           INI="$ANDROID_AVD_HOME/final30.avd/config.ini"
           sed -i "s|^image\.sysdir\.1=.*|image.sysdir.1=$SDK/system-images/android-30/google_apis/x86_64/|" "$INI"
-          sed -i -e 's/^hw\.ramSize=.*/hw.ramSize=4096/' -e 's/^hw\.cpu\.ncore=.*/hw.cpu.ncore=4/' "$INI"
-          grep -E '^(image\.sysdir|hw\.ramSize|hw\.cpu\.ncore)' "$INI"
+          grep -E '^(image\.sysdir)' "$INI"
           ls -la "$ANDROID_AVD_HOME"
           test -f "$ANDROID_AVD_HOME/final30.ini"
           test -d "$SDK/system-images/android-30/google_apis/x86_64"
@@ -370,7 +384,6 @@ jobs:
           fi
           "$SDK/emulator/emulator" -avd final30 -no-window -gpu swiftshader_indirect \
             -noaudio -no-boot-anim -no-snapshot -camera-back none -no-metrics \
-            -cores 4 -memory 4096 \
             > emulator.log 2>&1 &
           EMULATOR_PID=$!
           echo "::notice title=kvm::$(ls -l /dev/kvm 2>&1 | tr '\n' ' ')"
