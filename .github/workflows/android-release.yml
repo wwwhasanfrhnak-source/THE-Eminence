@@ -340,19 +340,38 @@ jobs:
         run: |
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
+          ADB="$SDK/platform-tools/adb"
+          {
+            echo "--- kvm ---"; ls -l /dev/kvm || echo "NO /dev/kvm"
+            echo "--- cpu virt ---"; grep -c -E '(vmx|svm)' /proc/cpuinfo || true
+            echo "--- disk ---"; df -h / /home || true
+            echo "--- avd ---"; ls -la "$HOME/.android/avd" || true
+          } 2>&1 | tee boot-env.txt
+          if [ ! -e /dev/kvm ]; then
+            echo "::error title=emulator::/dev/kvm is missing on this runner"
+          fi
           "$SDK/emulator/emulator" -avd final30 -no-window -gpu swiftshader_indirect \
             -noaudio -no-boot-anim -no-snapshot -camera-back none -no-metrics \
             > emulator.log 2>&1 &
-          ADB="$SDK/platform-tools/adb"
+          EMULATOR_PID=$!
           "$ADB" start-server >/dev/null 2>&1 || true
           BOOTED=0
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 180); do
             STATE=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
             if [ "$STATE" = "1" ]; then BOOTED=1; break; fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "::error title=emulator::emulator process exited early"
+              break
+            fi
             sleep 5
           done
           echo "booted=$BOOTED" | tee boot.txt
           "$ADB" devices -l | tee devices.txt
+          if [ "$BOOTED" != "1" ]; then
+            tail -n 40 emulator.log | cut -c1-240 | while IFS= read -r line; do
+              echo "::error title=emulator-log::${line}"
+            done
+          fi
           test "$BOOTED" = "1"
 
       - name: Verify final APK manifest and signature
@@ -390,6 +409,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: final-apk-verification
-          path: evidence
+          path: |
+            evidence
+            emulator.log
+            boot.txt
+            devices.txt
+            boot-env.txt
+            badging.txt
+            signature.txt
           if-no-files-found: warn
           retention-days: 14

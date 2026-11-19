@@ -131,7 +131,8 @@ jobs:
 
           {
             echo "--- disk ---"; df -h / /home || true
-            echo "--- kvm ---"; ls -l /dev/kvm || true
+            echo "--- kvm ---"; ls -l /dev/kvm || echo "NO /dev/kvm"
+            echo "--- cpu virt ---"; grep -c -E '(vmx|svm)' /proc/cpuinfo || true
             echo "--- sdk ---"; ls "$SDK" || true
             echo "--- ndk size ---"; du -sh "$HOME"/.buildozer/android/platform/android-ndk-* 2>/dev/null || true
           } 2>&1 | tee environment.txt
@@ -178,7 +179,7 @@ jobs:
           "$ADB" start-server >/dev/null 2>&1 || true
 
           BOOTED=0
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 180); do
             STATE=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
             if [ "$STATE" = "1" ]; then BOOTED=1; break; fi
             if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then echo "emulator exited early"; break; fi
@@ -186,6 +187,12 @@ jobs:
           done
           "$ADB" devices -l | tee devices.txt
           echo "booted=$BOOTED" | tee boot.txt
+          if [ "$BOOTED" != "1" ]; then
+            tail -n 40 emulator.log | cut -c1-240 | while IFS= read -r line; do
+              echo "::error title=emulator-log::${line}"
+            done
+            exit 1
+          fi
           "$ADB" shell input keyevent 82 >/dev/null 2>&1 || true
 
           APK=$(find mobile_app/bin -maxdepth 1 -name '*-release.apk' -type f | head -n 1)
