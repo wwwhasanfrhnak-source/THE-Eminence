@@ -320,6 +320,7 @@ jobs:
           ANDROID_SDK_ROOT: /home/runner/android-sdk
           ANDROID_HOME: /home/runner/android-sdk
           ANDROID_AVD_HOME: /home/runner/.android/avd
+          ANDROID_USER_HOME: /home/runner/.android
         run: |
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
@@ -335,13 +336,18 @@ jobs:
           echo no | timeout 600 "$SDK/cmdline-tools/latest/bin/avdmanager" create avd \
             -n final30 -k "system-images;android-30;google_apis;x86_64" \
             -p "$ANDROID_AVD_HOME/final30.avd" --force
+          INI="$ANDROID_AVD_HOME/final30.avd/config.ini"
+          sed -i "s|^image\.sysdir\.1=.*|image.sysdir.1=$SDK/system-images/android-30/google_apis/x86_64/|" "$INI"
+          grep '^image.sysdir' "$INI"
           ls -la "$ANDROID_AVD_HOME"
           test -f "$ANDROID_AVD_HOME/final30.ini"
+          test -d "$SDK/system-images/android-30/google_apis/x86_64"
 
       - name: Boot emulator
         env:
           ANDROID_SDK_ROOT: /home/runner/android-sdk
           ANDROID_AVD_HOME: /home/runner/.android/avd
+          ANDROID_USER_HOME: /home/runner/.android
         run: |
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
@@ -373,6 +379,9 @@ jobs:
           echo "booted=$BOOTED" | tee boot.txt
           "$ADB" devices -l | tee devices.txt
           if [ "$BOOTED" != "1" ]; then
+            grep -E '^(AvdId|image\.sysdir|hw\.cpu)' "$ANDROID_AVD_HOME/final30.avd/config.ini" 2>/dev/null | while IFS= read -r line; do
+              echo "::error title=avd-config::${line}"
+            done
             tail -n 40 emulator.log | cut -c1-240 | while IFS= read -r line; do
               echo "::error title=emulator-log::${line}"
             done
