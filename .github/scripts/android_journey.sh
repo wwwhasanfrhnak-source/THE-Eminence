@@ -100,10 +100,16 @@ timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed
 timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
 START_TS=$(date +%s)
+TICK=0
 for _ in $(seq 1 735); do
   log_has "app_start" && STARTED=1 && break
+  TICK=$((TICK+1))
+  if [ $((TICK % 5)) -eq 0 ]; then
+    echo "$(date +%T) pid=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')" >> startup-pid-timeline.txt
+  fi
   sleep 4
 done
+: > startup-wait.txt
 echo "startup wait seconds: $(( $(date +%s) - START_TS ))" | tee startup-wait.txt
 if [ "$STARTED" != "1" ]; then
   "$ADB" shell pidof "$PKG" | tr -d '\r' | tee startup-pid.txt || true
@@ -112,6 +118,8 @@ if [ "$STARTED" != "1" ]; then
   timeout 60 "$ADB" logcat -d > startup-logcat.txt 2>&1 || true
   {
     echo "startup diagnostic: pid=$(cat startup-pid.txt | tr '\n' ' ')"
+    cat startup-wait.txt 2>/dev/null || true
+    tail -n 12 startup-pid-timeline.txt 2>/dev/null || true
     tail -n 25 startup-crash.txt
     grep -aE "python|Kivy|SDL|electrocalc|FATAL|AndroidRuntime" startup-logcat.txt | tail -n 40
   } | cut -c1-240 | while IFS= read -r line; do

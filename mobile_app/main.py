@@ -27,6 +27,8 @@ from rtl import rtl
 from views.dashboard_screen import DashboardScreen
 from views.login_screen import LoginScreen
 
+Logger.info("ElectroCalc: module_import")
+
 
 APP_DIR = Path(__file__).resolve().parent
 ASSET_DIR = APP_DIR / "assets"
@@ -51,6 +53,7 @@ class ElectroCalcApp(MDApp):
         Logger.info("ElectroCalc: app_start")
 
     def build(self):
+        Logger.info("ElectroCalc: build_begin")
         self.title = "ElectroCalc"
         self.theme_cls.theme_style = "Light"
         self.theme_cls.primary_palette = "Blue"
