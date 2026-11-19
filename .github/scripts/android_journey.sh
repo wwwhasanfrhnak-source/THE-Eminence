@@ -100,7 +100,7 @@ timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed
 timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
 START_TS=$(date +%s)
-for _ in $(seq 1 150); do
+for _ in $(seq 1 400); do
   log_has "app_start" && STARTED=1 && break
   sleep 4
 done
@@ -255,7 +255,7 @@ phase "phase7-restart"
 sleep 3
 timeout 120 "$ADB" shell am start -n "$ACT" >> relaunch.txt 2>&1 || true
 RESTARTED=0
-for _ in $(seq 1 75); do
+for _ in $(seq 1 150); do
   log_has "app_start" && RESTARTED=1 && break
   sleep 4
 done

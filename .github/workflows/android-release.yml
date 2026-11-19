@@ -332,13 +332,15 @@ jobs:
           SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
           yes | timeout 600 "$SDKM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
           timeout 2400 "$SDKM" --sdk_root="$SDK" "platform-tools" "emulator" \
+            "build-tools;34.0.0" "platforms;android-34" \
             "system-images;android-30;google_apis;x86_64" 2>&1 | tr '\r' '\n' | tail -n 40
           echo no | timeout 600 "$SDK/cmdline-tools/latest/bin/avdmanager" create avd \
             -n final30 -k "system-images;android-30;google_apis;x86_64" \
             -p "$ANDROID_AVD_HOME/final30.avd" --force
           INI="$ANDROID_AVD_HOME/final30.avd/config.ini"
           sed -i "s|^image\.sysdir\.1=.*|image.sysdir.1=$SDK/system-images/android-30/google_apis/x86_64/|" "$INI"
-          grep '^image.sysdir' "$INI"
+          sed -i -e 's/^hw\.ramSize=.*/hw.ramSize=4096/' -e 's/^hw\.cpu\.ncore=.*/hw.cpu.ncore=4/' "$INI"
+          grep -E '^(image\.sysdir|hw\.ramSize|hw\.cpu\.ncore)' "$INI"
           ls -la "$ANDROID_AVD_HOME"
           test -f "$ANDROID_AVD_HOME/final30.ini"
           test -d "$SDK/system-images/android-30/google_apis/x86_64"
@@ -395,13 +397,22 @@ jobs:
           set -uxo pipefail
           SDK="$ANDROID_SDK_ROOT"
           APK="dist/ElectroCalc-v1.0.0-release.apk"
+          ls -la dist | tee dist-listing.txt
+          if [ ! -f "$APK" ]; then
+            echo "::error title=apk::downloaded release apk missing at $APK"
+            exit 1
+          fi
           BT=$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$BT" ] || [ ! -x "$BT/aapt" ]; then
+            echo "::error title=apk::aapt not found under $SDK/build-tools"
+            exit 1
+          fi
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -q "'arm64-v8a'" badging.txt || { echo "missing arm64-v8a"; exit 1; }
-          grep -q "'x86_64'" badging.txt || { echo "missing x86_64"; exit 1; }
+          grep -q "'arm64-v8a'" badging.txt || { echo "::error title=apk::missing arm64-v8a"; exit 1; }
+          grep -q "'x86_64'" badging.txt || { echo "::error title=apk::missing x86_64"; exit 1; }
           "$BT/apksigner" verify --verbose --print-certs "$APK" | tee signature.txt
           if grep -q "CN=Android Debug" signature.txt; then
-            echo "debug-signed release APK"; exit 1
+            echo "::error title=apk::debug-signed release APK"; exit 1
           fi
           sha256sum "$APK" | tee sha256.txt
           ls -l "$APK" | tee size.txt
