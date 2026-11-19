@@ -32,7 +32,10 @@ phase() { echo "::notice title=journey::${1}"; }
 shot() { timeout 60 "$ADB" exec-out screencap -p > "$1" || true; }
 tap() { "$ADB" shell input tap "$1" "$2" >/dev/null 2>&1 || true; sleep "${3:-1}"; }
 typ() { "$ADB" shell input text "$1" >/dev/null 2>&1 || true; sleep 1; }
-ime_off() { "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true; sleep 1; }
+ime_off() {
+  if [ "${IME_DISABLED:-0}" = "1" ]; then sleep 1; return; fi
+  "$ADB" shell input keyevent 4 >/dev/null 2>&1 || true; sleep 1
+}
 clear_field() {
   "$ADB" shell 'input keyevent 123; i=0; while [ $i -lt 24 ]; do input keyevent 67; i=$((i+1)); done' >/dev/null 2>&1 || true
   sleep 1
@@ -99,6 +102,14 @@ sleep 2
 timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed"
 "$ADB" shell svc wifi disable >/dev/null 2>&1 || true
 "$ADB" shell svc data disable >/dev/null 2>&1 || true
+IME_DISABLED=0
+FIRST_IME=""
+for ime in $("$ADB" shell ime list -s 2>/dev/null | tr -d '\r'); do
+  [ -n "$FIRST_IME" ] || FIRST_IME="$ime"
+  "$ADB" shell ime disable "$ime" >/dev/null 2>&1 || true
+done
+IME_DISABLED=1
+{ echo "first_ime=$FIRST_IME"; "$ADB" shell ime list -s 2>/dev/null | tr -d '\r'; } | tee ime-state.txt
 "$ADB" logcat -c >/dev/null 2>&1 || true
 timeout 120 "$ADB" shell am start -n "$ACT" 2>&1 | tee launch.txt || true
 STARTED=0
@@ -343,6 +354,22 @@ assert len(positions("screen=dashboard")) >= 3, "expected three dashboard entrie
 print(f"phase8 ok: ordered events, {starts} app starts, "
       f"{len(positions('screen=dashboard'))} dashboard entries")
 PY
+
+# ---- keyboard behaviour check ----
+phase "keyboard-check"
+tap 284 52 3
+if [ -n "$FIRST_IME" ]; then
+  "$ADB" shell ime enable "$FIRST_IME" >/dev/null 2>&1 || true
+  "$ADB" shell ime set "$FIRST_IME" >/dev/null 2>&1 || true
+fi
+tap 160 330 3
+shot login-keyboard.png
+"$ADB" shell input keyevent 4 >/dev/null 2>&1 || true
+sleep 2
+shot login-keyboard-closed.png
+"$ADB" shell pidof "$PKG" | tr -d '\r' > pid-keyboard.txt || true
+test -s pid-keyboard.txt || fail "app died during keyboard interaction"
+echo "keyboard check ok"
 
 timeout 300 "$ADB" logcat -d > logcat.txt 2>&1 || true
 timeout 120 "$ADB" logcat -d -b crash > logcat-crash.txt 2>&1 || true

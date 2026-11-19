@@ -259,7 +259,8 @@ jobs:
           for name in ("setup-filled", "change-dialog", "change-form-filled", "change-attempt-1",
                        "change-attempt-2", "change-attempt-3", "change-attempt-4", "change-attempt-5",
                        "dashboard", "login-old-filled", "login-old-rejected", "dashboard-relogin",
-                       "restart-login", "dashboard-restart", "splash-check"):
+                       "restart-login", "dashboard-restart", "login-keyboard", "login-keyboard-closed",
+                       "splash-check"):
               path = pathlib.Path(f"{name}.png")
               if not path.is_file():
                   continue
@@ -299,6 +300,8 @@ jobs:
             dashboard-relogin.png
             restart-login.png
             dashboard-restart.png
+            login-keyboard.png
+            login-keyboard-closed.png
             focus.txt
             relaunch.txt
             pid-relaunch.txt
