@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - ".github/workflows/android-emulator-smoke.yml"
+      - ".github/scripts/**"
       - "mobile_app/**"
 
 concurrency:

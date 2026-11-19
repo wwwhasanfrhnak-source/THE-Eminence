@@ -15,10 +15,19 @@ mkdir -p "$OUT"
 cd "$OUT"
 
 fail() {
+  echo "::error title=journey::FAILED: $*"
   echo "[journey] FAILED: $*"
-  applog | tail -n 25 || true
+  # Surface the failure context as annotations so diagnosis works even when
+  # logs and artifacts are unavailable.
+  [ -f db-timeline.txt ] && tail -n 8 db-timeline.txt | cut -c1-240 | while IFS= read -r line; do
+    echo "::error title=journey-db::${line}"
+  done
+  applog | tail -n 12 | cut -c1-240 | while IFS= read -r line; do
+    echo "::error title=journey-log::${line}"
+  done
   exit 1
 }
+phase() { echo "::notice title=journey::${1}"; }
 
 shot() { timeout 60 "$ADB" exec-out screencap -p > "$1" || true; }
 tap() { "$ADB" shell input tap "$1" "$2" >/dev/null 2>&1 || true; sleep "${3:-1}"; }
@@ -77,8 +86,11 @@ echo "::add-mask::$SMOKE_PASS"
 echo "::add-mask::$NEW_PASS"
 
 # ---- fresh installation ----
+phase "fresh-install"
 "$ADB" root >/dev/null 2>&1 || true
 sleep 5
+"$ADB" shell wm size 2>&1 | tee -a environment.txt || true
+"$ADB" shell wm density 2>&1 | tee -a environment.txt || true
 "$ADB" uninstall "$PKG" >/dev/null 2>&1 || true
 sleep 2
 timeout 300 "$ADB" install "$APK" 2>&1 | tee install.txt || fail "install failed"
@@ -97,8 +109,9 @@ shot emulator-startup.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid.txt || true
 
 # ---- phase 0: fresh device database ----
+phase "phase0-fresh-db"
 pull_db db-initial
-python3 - <<'PY'
+python3 - <<'PY' || fail "phase0: fresh database assertion failed"
 import json
 state = json.load(open("db-initial.json"))
 assert state["users"] == 0, state
@@ -106,6 +119,7 @@ print("phase0 ok: fresh database has no accounts")
 PY
 
 # ---- phase 1: first-run admin setup ----
+phase "phase1-bootstrap"
 tap 160 330 1
 typ "$SMOKE_USER"
 ime_off
@@ -124,7 +138,7 @@ done
 shot change-dialog.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid-after-setup.txt || true
 [ "$SETUP_OK" = "1" ] || fail "admin creation did not save"
-python3 - <<'PY'
+python3 - <<'PY' || fail "phase1: bootstrap database assertions failed"
 import json
 state = json.load(open("db-bootstrap.json"))
 assert state["users"] == 1, state
@@ -139,6 +153,7 @@ PY
 log_has "bootstrap=created" || fail "bootstrap event missing from log"
 
 # ---- phase 2: forced password change ----
+phase "phase2-forced-change"
 tap 160 300 1
 typ "$NEW_PASS"
 ime_off
@@ -157,7 +172,7 @@ done
 shot dashboard.png
 "$ADB" shell pidof "$PKG" | tr -d '\r' | tee pid-after-change.txt || true
 [ "$CHANGED" = "1" ] || fail "forced password change did not complete"
-python3 - <<'PY'
+python3 - <<'PY' || fail "phase2: password change database assertions failed"
 import json, os
 state = json.load(open("db-changed.json"))
 assert state["users"] == 1, state
@@ -171,6 +186,7 @@ log_has "password_changed" || fail "password_changed event missing"
 log_has "screen=dashboard" || fail "dashboard event missing"
 
 # ---- phase 3: dashboard scroll ----
+phase "phase3-dashboard-scroll"
 "$ADB" shell input swipe 160 520 160 220 500 >/dev/null 2>&1 || true
 sleep 2
 shot dashboard-scrolled.png
@@ -178,6 +194,7 @@ shot dashboard-scrolled.png
 sleep 2
 
 # ---- phase 4: logout ----
+phase "phase4-logout"
 LOGGED_OUT=0
 for coords in "284 52" "290 52" "280 52" "296 52" "240 52" "250 48" "288 40" "300 45" "236 56" "288 56" "304 52" "268 52"; do
   set -- $coords
@@ -188,6 +205,7 @@ shot logout-login.png
 [ "$LOGGED_OUT" = "1" ] || fail "logout action not reached"
 
 # ---- phase 5: old temporary password must be refused ----
+phase "phase5-old-password"
 fill_field 160 330 "$SMOKE_USER"
 fill_field 160 400 "$SMOKE_PASS"
 shot login-old-filled.png
@@ -196,7 +214,7 @@ sleep 10
 shot login-old-rejected.png
 pull_db db-old-rejected
 log_has "login=denied" || fail "old password was not rejected"
-python3 - <<'PY'
+python3 - <<'PY' || fail "phase5: rejected-login database assertions failed"
 import json
 before = json.load(open("db-changed.json"))
 after = json.load(open("db-old-rejected.json"))
@@ -206,6 +224,7 @@ print("phase5 ok: rejected login left the database untouched")
 PY
 
 # ---- phase 6: login with the new password ----
+phase "phase6-relogin"
 fill_field 160 400 "$NEW_PASS"
 tap 160 585 2
 sleep 12
@@ -216,6 +235,7 @@ echo "dashboard events after relogin: $DASH_COUNT"
 log_has "login=ok" || fail "successful login event missing"
 
 # ---- phase 7: restart and persistence ----
+phase "phase7-restart"
 "$ADB" shell am force-stop "$PKG" >/dev/null 2>&1 || true
 sleep 3
 timeout 120 "$ADB" shell am start -n "$ACT" >> relaunch.txt 2>&1 || true
@@ -241,7 +261,7 @@ echo "pids before=$PID_BEFORE after=$PID_AFTER"
 DASH_COUNT=$(applog | grep -c "screen=dashboard" || true)
 echo "dashboard events after restart: $DASH_COUNT"
 [ "$DASH_COUNT" -ge 3 ] || fail "restart login did not reach dashboard"
-python3 - <<'PY'
+python3 - <<'PY' || fail "phase7: restart persistence assertions failed"
 import json, os
 changed = json.load(open("db-changed.json"))
 final = json.load(open("db-final.json"))
@@ -255,9 +275,10 @@ print("phase7 ok: single admin persisted across restart, hashed, flag cleared")
 PY
 
 # ---- phase 8: ordered log evidence ----
+phase "phase8-log-order"
 applog > app-log.txt
 grep -c "ElectroCalc:" app-log.txt | tee log-events.txt || true
-python3 - <<'PY'
+python3 - <<'PY' || fail "phase8: ordered log assertions failed"
 lines = open("app-log.txt", encoding="utf-8", errors="replace").read().splitlines()
 
 def positions(needle):
